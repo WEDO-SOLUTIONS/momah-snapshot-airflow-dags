@@ -8,6 +8,7 @@ from airflow.models import Variable
 from airflow.models.param import Param
 from airflow.utils.trigger_rule import TriggerRule
 
+# Use absolute imports now that the python path is fixed
 from dags.factories.dag_helpers import get_pod_override_config
 from etl_scripts import manage_asset, sync_data
 from etl_scripts.common import config as Cfg
@@ -18,6 +19,7 @@ GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.gi
 GIT_BRANCH = "main"
 
 def create_asset_management_dag(schema_name: str, mapper_module) -> DAG:
+    """Factory function to generate a manual asset management DAG."""
     dag_id = f"{schema_name}_01_asset_management"
 
     def _run_management_task(**context):
@@ -43,6 +45,7 @@ def create_asset_management_dag(schema_name: str, mapper_module) -> DAG:
     return dag
 
 def create_hourly_sync_dag(schema_name: str, mapper_module) -> DAG:
+    """Factory function to generate a new hourly sync DAG for large data."""
     dag_id = f"{schema_name}_02_hourly_sync"
     prefix = f"{schema_name.upper()}_"
 
@@ -84,7 +87,7 @@ def create_hourly_sync_dag(schema_name: str, mapper_module) -> DAG:
         ti = context["ti"]
         hook = OracleHook(oracle_conn_id='oracle_momrah_db')
         view_name = Variable.get(f"{prefix}DB_VIEW_NAME")
-        last_known_ids = set(ti.xcom_pull(task_ids='get_last_known_ids', key='return_value'))
+        last_known_ids = set(context["ti"].xcom_pull(task_ids='get_last_known_ids', key='return_value'))
         
         if not last_known_ids:
             log.info("No previously known IDs found, skipping delete check.")
@@ -103,6 +106,7 @@ def create_hourly_sync_dag(schema_name: str, mapper_module) -> DAG:
             x_brand_header=api_hook.get_extra().get("x_brand_header"), dag_run_id=ti.run_id
         )
         manager.push_deletes_to_api(Variable.get(f"{prefix}DYNAMIC_ASSET_ID"), ids_to_delete)
+        manager.upload_reports_to_s3()
         
         ti.xcom_push(key="final_set_of_ids", value=list(all_current_ids))
         return manager.stats
@@ -112,16 +116,16 @@ def create_hourly_sync_dag(schema_name: str, mapper_module) -> DAG:
         final_stats = {"validated": 0, "skipped": 0, "added": 0, "updated": 0, "pushed": 0, "push_failed": 0, "deleted": 0, "delete_failed": 0}
         
         for stats in upsert_stats_list:
-            for key in final_stats:
-                final_stats[key] += stats.get(key, 0)
+            if stats:
+                for key in final_stats:
+                    final_stats[key] += stats.get(key, 0)
         
         final_stats["deleted"] += delete_stats.get("deleted", 0)
         final_stats["delete_failed"] += delete_stats.get("delete_failed", 0)
         
         log.info(f"AGGREGATED STATS: {final_stats}")
         
-        # Upload the final aggregated report
-        api_hook = HttpHook(http_conn_id='urbi_pro_api') # Needed to instantiate a dummy manager
+        api_hook = HttpHook(http_conn_id='urbi_pro_api')
         manager = sync_data.SyncManager(
             schema_name=schema_name, api_base_url=api_hook.base_url, access_token="",
             x_brand_header="", dag_run_id=ti.run_id
@@ -142,14 +146,16 @@ def create_hourly_sync_dag(schema_name: str, mapper_module) -> DAG:
         get_last_known_ids_task = PythonOperator(task_id='get_last_known_ids', python_callable=_get_last_known_ids)
         fetch_chunks_task = PythonOperator(task_id="fetch_and_chunk_upsert_data", python_callable=_fetch_and_chunk_upserts)
         
+        mapped_op_kwargs = fetch_chunks_task.output.map(
+            lambda chunk: {"chunk": chunk, "last_known_ids": get_last_known_ids_task.output}
+        )
         push_chunks_task = PythonOperator.partial(
             task_id="push_upsert_chunk", python_callable=_push_upsert_chunk,
             executor_config=get_pod_override_config(GIT_REPO_URL, GIT_BRANCH)
-        ).expand(chunk=fetch_chunks_task.output, op_kwargs={"last_known_ids": get_last_known_ids_task.output})
+        ).expand(op_kwargs=mapped_op_kwargs)
         
         process_deletes_task = PythonOperator(
             task_id="process_deletes", python_callable=_process_deletes,
-            op_kwargs={"last_known_ids": get_last_known_ids_task.output},
             executor_config=get_pod_override_config(GIT_REPO_URL, GIT_BRANCH)
         )
         
