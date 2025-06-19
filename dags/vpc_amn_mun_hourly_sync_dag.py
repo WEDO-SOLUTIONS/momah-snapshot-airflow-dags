@@ -7,7 +7,7 @@ from airflow.providers.http.hooks.http import HttpHook
 from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 
-# UPDATED IMPORT PATHS
+# Imports from our custom package
 from snapshot_pro_etl.pod_helpers import get_pod_override_config
 from snapshot_pro_etl import data_sync
 from snapshot_pro_etl.common import config as Cfg
@@ -17,6 +17,8 @@ log = logging.getLogger(__name__)
 
 # --- Configuration ---
 SCHEMA_NAME = "vpc_amn_mun"
+GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.git"
+GIT_BRANCH = "main"
 # ---
 
 def _fetch_and_chunk_upserts(**context):
@@ -137,15 +139,17 @@ with DAG(
     tags=["snapshot-pro", "etl", SCHEMA_NAME],
     max_active_runs=1,
 ) as dag:
+    
     get_last_known_ids_task = PythonOperator(
         task_id='get_last_known_ids', python_callable=_get_last_known_ids
     )
+    
     fetch_chunks_task = PythonOperator(
         task_id="fetch_and_chunk_upsert_data", python_callable=_fetch_and_chunk_upserts
     )
     
-    # Call the updated helper function
-    pod_override = get_pod_override_config()
+    # CORRECTED: Call the helper function with arguments
+    pod_override = get_pod_override_config(GIT_REPO_URL, GIT_BRANCH)
 
     push_chunks_task = PythonOperator.partial(
         task_id="push_upsert_chunk",
@@ -156,11 +160,13 @@ with DAG(
             lambda chunk: {"chunk": chunk, "last_known_ids": get_last_known_ids_task.output}
         )
     )
+    
     process_deletes_task = PythonOperator(
         task_id="process_deletes",
         python_callable=_process_deletes,
         executor_config=pod_override
     )
+    
     aggregate_task = PythonOperator(
         task_id="aggregate_and_report_stats",
         python_callable=_aggregate_and_report_stats,

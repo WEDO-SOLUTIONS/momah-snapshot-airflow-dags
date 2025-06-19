@@ -42,7 +42,7 @@ def get_pod_override_config(git_repo_url: str, git_branch: str) -> dict:
                         name="base",
                         image="python:3.9-slim",
                         command=["/bin/sh", "-c"],
-                        args=[install_and_run_command], # Use the new robust command
+                        args=[install_and_run_command], # Use the robust command
                         volume_mounts=[
                             k8s.V1VolumeMount(name="repo-storage", mount_path="/repo")
                         ],
