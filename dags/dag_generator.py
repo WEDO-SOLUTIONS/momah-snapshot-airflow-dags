@@ -1,5 +1,11 @@
 import os
+import sys
+
+# Add the repository root to the Python path. This is the definitive fix.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import importlib
+
 from airflow.models.dag import DAG
 from factories.urbi_pro_dag_factory import create_asset_management_dag, create_hourly_sync_dag
 

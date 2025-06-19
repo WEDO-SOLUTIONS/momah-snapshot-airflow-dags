@@ -7,13 +7,14 @@ from airflow.providers.http.hooks.http import HttpHook
 from airflow.models import Variable
 from airflow.models.param import Param
 from airflow.utils.trigger_rule import TriggerRule
-from .dag_helpers import get_pod_override_config
+
+from dags.factories.dag_helpers import get_pod_override_config
 from etl_scripts import manage_asset, sync_data
 from etl_scripts.common import config as Cfg
 
 log = logging.getLogger(__name__)
 
-GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-airflow.git"
+GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.git"
 GIT_BRANCH = "main"
 
 def create_asset_management_dag(schema_name: str, mapper_module) -> DAG:
