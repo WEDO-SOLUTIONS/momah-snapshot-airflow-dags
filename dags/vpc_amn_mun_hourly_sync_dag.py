@@ -17,8 +17,6 @@ log = logging.getLogger(__name__)
 
 # --- Configuration ---
 SCHEMA_NAME = "vpc_amn_mun"
-GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.git"
-GIT_BRANCH = "main"
 # ---
 
 def _fetch_and_chunk_upserts(**context):
@@ -145,10 +143,14 @@ with DAG(
     fetch_chunks_task = PythonOperator(
         task_id="fetch_and_chunk_upsert_data", python_callable=_fetch_and_chunk_upserts
     )
+    
+    # Call the updated helper function
+    pod_override = get_pod_override_config()
+
     push_chunks_task = PythonOperator.partial(
         task_id="push_upsert_chunk",
         python_callable=_push_upsert_chunk,
-        executor_config=get_pod_override_config(GIT_REPO_URL, GIT_BRANCH)
+        executor_config=pod_override
     ).expand(
         op_kwargs=fetch_chunks_task.output.map(
             lambda chunk: {"chunk": chunk, "last_known_ids": get_last_known_ids_task.output}
@@ -157,7 +159,7 @@ with DAG(
     process_deletes_task = PythonOperator(
         task_id="process_deletes",
         python_callable=_process_deletes,
-        executor_config=get_pod_override_config(GIT_REPO_URL, GIT_BRANCH)
+        executor_config=pod_override
     )
     aggregate_task = PythonOperator(
         task_id="aggregate_and_report_stats",
