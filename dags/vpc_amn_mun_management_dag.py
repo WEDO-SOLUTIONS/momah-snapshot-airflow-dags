@@ -13,6 +13,8 @@ log = logging.getLogger(__name__)
 
 # --- Configuration ---
 SCHEMA_NAME = "vpc_amn_mun"
+GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.git"
+GIT_BRANCH = "main"
 # ---
 
 def _run_management_task(**context):
@@ -40,5 +42,5 @@ with DAG(
         task_id="run_asset_task",
         python_callable=_run_management_task,
         # CORRECTED: Pass the required arguments to the helper function
-        executor_config=get_pod_override_config(),
+        executor_config=get_pod_override_config(GIT_REPO_URL, GIT_BRANCH),
     )
