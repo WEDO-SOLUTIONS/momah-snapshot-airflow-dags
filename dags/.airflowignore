@@ -1,12 +1,9 @@
-snapshot_pro_etl/common/__init__.py
-snapshot_pro_etl/common/config.py
-
-snapshot_pro_etl/mappers/__init__.py
-snapshot_pro_etl/mappers/vpc_amn_mun.py
-snapshot_pro_etl/mappers/asset_management.py
-snapshot_pro_etl/mappers/data_sync.py
-snapshot_pro_etl/mappers/pod_helpers.py
-
-snapshot_pro_etl/__init__.py
-
+# Ignore ONLY these files — not needed by Airflow
+.airflowignore
 etl_requirements.txt
+
+# Ignore helper Python scripts so Airflow does NOT treat them as DAGs
+snapshot_pro_etl/common/*.py
+snapshot_pro_etl/mappers/*.py
+
+# But DO NOT ignore the directories — Python still needs them to resolve imports
