@@ -3,17 +3,27 @@ from kubernetes.client import models as k8s
 
 def get_pod_override_config() -> dict:
     """
-    Returns a simplified pod_override.
-    It ONLY overrides the main container's image and command, assuming
-    the system's default git-sync is already providing the code volume.
+    Returns the executor_config for a pod that installs the project
+    by first copying it to a writable directory to solve permission errors.
     """
-    # This command creates a writable directory for pip, installs the project
-    # from the git-synced repo, adds it to the path, and then runs the airflow task.
-    # The system git-sync places the repo at /opt/airflow/dags/repo.
+    # This robust shell command sequence is the final fix.
     install_and_run_command = (
+        # 1. Create a temporary, writable directory for our source code.
+        "mkdir -p /tmp/build_source && "
+        
+        # 2. Copy the read-only repo code to the writable directory.
+        "cp -r /opt/airflow/dags/repo/. /tmp/build_source/ && "
+
+        # 3. Create a target directory for the final installed packages.
         "mkdir -p /tmp/packages && "
-        "pip install --no-cache-dir --target /tmp/packages /opt/airflow/dags/repo/. && "
+
+        # 4. Install the package FROM THE WRITABLE COPY into the target directory.
+        "pip install --no-cache-dir --target /tmp/packages /tmp/build_source/. && "
+
+        # 5. Add the new packages directory to Python's path.
         "export PYTHONPATH=${PYTHONPATH}:/tmp/packages && "
+        
+        # 6. Finally, execute the Airflow task.
         "exec airflow tasks run {{ ti.dag_id }} {{ ti.task_id }} {{ ti.run_id }} --local"
     )
 
@@ -28,7 +38,7 @@ def get_pod_override_config() -> dict:
                         image="python:3.9-slim",
                         # The command to run inside the container
                         command=["/bin/sh", "-c"],
-                        args=[install_and_run_command],
+                        args=[install_and_run_command]
                     )
                 ]
             )
