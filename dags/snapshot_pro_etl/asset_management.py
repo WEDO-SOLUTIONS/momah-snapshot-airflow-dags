@@ -2,7 +2,7 @@
 import logging
 import json
 from airflow.providers.http.hooks.http import HttpHook
-from .common import config as Cfg
+from snapshot_pro_etl.common import config as Cfg
 
 logger = logging.getLogger(__name__)
 

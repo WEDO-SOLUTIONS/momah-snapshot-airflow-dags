@@ -6,7 +6,7 @@ import concurrent.futures
 from typing import Dict, Any, List, Optional, Tuple
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
-from .common import config as Cfg
+from snapshot_pro_etl.common import config as Cfg
 
 logger = logging.getLogger(__name__)
 
