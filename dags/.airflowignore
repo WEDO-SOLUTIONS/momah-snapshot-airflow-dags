@@ -1,9 +1,11 @@
-# Ignore ONLY these files — not needed by Airflow
-.airflowignore
-etl_requirements.txt
-
-# Ignore helper Python scripts so Airflow does NOT treat them as DAGs
+# Ignore helper files — prevent them being parsed as DAGs
+snapshot_pro_etl/__init__.py
 snapshot_pro_etl/common/*.py
 snapshot_pro_etl/mappers/*.py
+snapshot_pro_etl/data_sync.py
+snapshot_pro_etl/asset_management.py
+snapshot_pro_etl/pod_helpers.py
 
-# But DO NOT ignore the directories — Python still needs them to resolve imports
+# Also ignore irrelevant files
+.airflowignore
+etl_requirements.txt
