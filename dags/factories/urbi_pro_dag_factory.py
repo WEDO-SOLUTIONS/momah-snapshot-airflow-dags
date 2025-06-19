@@ -7,7 +7,7 @@ from airflow.providers.http.hooks.http import HttpHook
 from airflow.models import Variable
 from airflow.models.param import Param
 from airflow.utils.trigger_rule import TriggerRule
-from dags.dag_helpers import get_pod_override_config
+from .dag_helpers import get_pod_override_config
 from etl_scripts import manage_asset, sync_data
 from etl_scripts.common import config as Cfg
 
