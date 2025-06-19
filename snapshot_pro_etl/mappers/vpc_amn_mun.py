@@ -1,5 +1,7 @@
+# /snapshot_pro_etl/mappers/vpc_amn_mun.py
 from typing import Dict, Any
 
+# Maps database columns to their display properties for the vpc_amn_mun schema.
 ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
     "latitude": {"en": "Latitude", "ar": "خط العرض", "type": "number", "mandatory": True},
     "longitude": {"en": "Longitude", "ar": "خط الطول", "type": "number", "mandatory": True},

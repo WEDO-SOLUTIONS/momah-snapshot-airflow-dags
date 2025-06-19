@@ -1,10 +1,8 @@
+# /snapshot_pro_etl/pod_helpers.py
 from kubernetes.client import models as k8s
 
 def get_pod_override_config(git_repo_url: str, git_branch: str) -> dict:
-    """
-    Returns the executor_config dictionary for a dynamic pod that
-    installs dependencies from a requirements file in a Git repo.
-    """
+    """Returns the executor_config for a pod that installs the project via setup.py."""
     return {
         "pod_override": k8s.V1Pod(
             spec=k8s.V1PodSpec(
@@ -17,7 +15,7 @@ def get_pod_override_config(git_repo_url: str, git_branch: str) -> dict:
                             f"--branch={git_branch}",
                             "--root=/repo",
                             "--one-time",
-                            "--depth=1"
+                            "--depth=1",
                         ],
                         volume_mounts=[
                             k8s.V1VolumeMount(name="repo-storage", mount_path="/repo")
@@ -30,7 +28,7 @@ def get_pod_override_config(git_repo_url: str, git_branch: str) -> dict:
                         image="python:3.9-slim",
                         command=["/bin/sh", "-c"],
                         args=[
-                            "pip install --no-cache-dir -r /repo/etl_requirements.txt && exec airflow tasks run {{ ti.dag_id }} {{ ti.task_id }} {{ ti.run_id }} --local"
+                            "pip install --no-cache-dir /repo/. && exec airflow tasks run {{ ti.dag_id }} {{ ti.task_id }} {{ ti.run_id }} --local"
                         ],
                         volume_mounts=[
                             k8s.V1VolumeMount(name="repo-storage", mount_path="/repo")

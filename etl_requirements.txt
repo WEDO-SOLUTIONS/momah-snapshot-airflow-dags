@@ -1,6 +1,2 @@
-requests
-python-dateutil
-boto3
-s3fs
-pandas
-apache-airflow-providers-cncf-kubernetes
+# This tells pip to install the package found in the current directory.
+--editable .

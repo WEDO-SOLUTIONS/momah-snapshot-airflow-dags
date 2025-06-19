@@ -1,3 +1,4 @@
+# /snapshot_pro_etl/asset_management.py
 import logging
 import json
 from airflow.providers.http.hooks.http import HttpHook
@@ -6,9 +7,8 @@ from .common import config as Cfg
 logger = logging.getLogger(__name__)
 
 def create_or_update_asset(schema_name: str, attribute_mapper: dict, operation: str):
-    """Generic function to build and execute CREATE or UPDATE API calls."""
+    """Builds and executes CREATE or UPDATE API calls."""
     api_config = Cfg.get_config(schema_name)
-    # The hook gets the master token from the 'password' field of the connection
     api_hook = HttpHook(method='POST', http_conn_id='snapshot_pro_api_http_connector')
 
     attributes = []
@@ -19,10 +19,9 @@ def create_or_update_asset(schema_name: str, attribute_mapper: dict, operation: 
             "caption": map_info["en"],
             "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}
         })
-        # If this is the primary name column, create the special "name" type attribute
         if col_name == api_config["primary_name_column"]:
             attributes.append({
-                "id": f"{col_name}_ns", # The API uses this convention for the name attribute
+                "id": f"{col_name}_ns",
                 "type": "name",
                 "caption": map_info["en"],
                 "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}
@@ -41,7 +40,7 @@ def create_or_update_asset(schema_name: str, attribute_mapper: dict, operation: 
             "localizations": {"name": {"en": api_config["attribute_group_name"], "ar": api_config["attribute_group_name_ar"]}},
             "attributes": attributes
         }],
-        "filters": [] # Filters can be complex and are best managed via the Urbi Pro UI
+        "filters": []
     }
 
     http_method = "POST"
@@ -54,7 +53,6 @@ def create_or_update_asset(schema_name: str, attribute_mapper: dict, operation: 
 
     logger.info(f"Sending {http_method} request to {endpoint} for operation {operation}...")
     response = api_hook.run(endpoint=endpoint, json=payload, extra_options={"check_response": True})
-
     response_data = response.json()
     logger.info(f"Asset successfully {operation.lower()}d.")
     logger.info(f"Response: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
@@ -66,11 +64,10 @@ def create_or_update_asset(schema_name: str, attribute_mapper: dict, operation: 
         logger.info("----------------------------------------------------------------")
 
 def clear_all_asset_data(schema_name: str):
-    """Generic function to clear all data from an asset for a given schema."""
+    """Clears all data from an asset for a given schema."""
     api_config = Cfg.get_config(schema_name)
     api_hook = HttpHook(method='DELETE', http_conn_id='snapshot_pro_api_http_connector')
 
-    # The hook gets the global PUSH token from the 'extra' field of the connection
     push_token = api_hook.get_extra().get("push_data_access_token")
     asset_id = api_config["dynamic_asset_id"]
 

@@ -1,7 +1,8 @@
+# /snapshot_pro_etl/common/config.py
 from airflow.models import Variable
 
 def get_config(schema_name: str) -> dict:
-    """Fetches all configuration for a GIVEN SCHEMA from Airflow Variables."""
+    """Fetches all configuration for a given schema from Airflow Variables."""
     prefix = f"{schema_name.upper()}_"
     return {
         "asset_name": Variable.get(f"{prefix}ASSET_NAME"),
