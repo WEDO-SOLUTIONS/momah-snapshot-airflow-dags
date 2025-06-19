@@ -4,12 +4,12 @@ from kubernetes.client import models as k8s
 def get_pod_override_config() -> dict:
     """
     Returns the final, correct executor_config.
-    It uses the main Airflow image and installs custom packages into a
-    temporary directory to solve all permission and command-not-found issues.
+    It uses the main Airflow image (which has build tools) and installs
+    custom packages into a temporary directory to solve all issues.
     """
     # This robust shell command sequence is the final fix.
     install_and_run_command = (
-        # 1. Create a writable directory for our source code copy.
+        # 1. Create a temporary, writable directory for our source code copy.
         "mkdir -p /tmp/build_source && "
         
         # 2. Copy the read-only repo code to the writable directory.
@@ -25,7 +25,7 @@ def get_pod_override_config() -> dict:
         # 5. Add the new packages directory to Python's path.
         "export PYTHONPATH=${PYTHONPATH}:/tmp/packages && "
         
-        # 6. Finally, execute the Airflow task. This will now work.
+        # 6. Finally, execute the Airflow task.
         "exec airflow tasks run {{ ti.dag_id }} {{ ti.task_id }} {{ ti.run_id }} --local"
     )
 
@@ -34,15 +34,15 @@ def get_pod_override_config() -> dict:
             spec=k8s.V1PodSpec(
                 containers=[
                     k8s.V1Container(
-                        # This name 'base' is required by Airflow
+                        # This name 'base' is required by Airflow to override the main container
                         name="base",
                         
-                        # Use your main Airflow image, which contains the 'airflow' command
+                        # Use your main Airflow image, which has all necessary build tools
                         image="registry.momrah.gov.sa/urbi-omar/momah-airflow:latest",
                         
                         # The command to run inside the container
                         command=["/bin/sh", "-c"],
-                        args=[install_and_run_command]
+                        args=[install_and_run_command],
                     )
                 ]
             )
