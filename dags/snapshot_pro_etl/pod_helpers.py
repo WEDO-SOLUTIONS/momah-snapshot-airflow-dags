@@ -4,8 +4,8 @@ from kubernetes.client import models as k8s
 def get_pod_override_config() -> dict:
     """
     Returns the final, correct executor_config.
-    It uses the main Airflow image, runs as root to install system build
-    dependencies, and requests sufficient memory/cpu to avoid being killed.
+    This version requests specific CPU and Memory resources for the pod
+    to prevent it from being killed by the system during package installation.
     """
     # This command installs OS packages, then our Python package.
     install_and_run_command = (
