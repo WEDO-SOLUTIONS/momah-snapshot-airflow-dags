@@ -8,10 +8,10 @@ from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 
 # UPDATED IMPORT PATHS
-from dags.snapshot_pro_etl.pod_helpers import get_pod_override_config
-from dags.snapshot_pro_etl import data_sync
-from dags.snapshot_pro_etl.common import config as Cfg
-from dags.snapshot_pro_etl.mappers import vpc_amn_mun
+from snapshot_pro_etl.pod_helpers import get_pod_override_config
+from snapshot_pro_etl import data_sync
+from snapshot_pro_etl.common import config as Cfg
+from snapshot_pro_etl.mappers import vpc_amn_mun
 
 log = logging.getLogger(__name__)
 

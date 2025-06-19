@@ -5,9 +5,9 @@ from airflow.operators.python import PythonOperator
 from airflow.models.param import Param
 
 # UPDATED IMPORT PATH
-from dags.snapshot_pro_etl import asset_management
-from dags.snapshot_pro_etl.mappers import vpc_amn_mun
-from dags.snapshot_pro_etl.pod_helpers import get_pod_override_config
+from snapshot_pro_etl import asset_management
+from snapshot_pro_etl.mappers import vpc_amn_mun
+from snapshot_pro_etl.pod_helpers import get_pod_override_config
 
 log = logging.getLogger(__name__)
 
