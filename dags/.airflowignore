@@ -5,7 +5,3 @@ snapshot_pro_etl/mappers/*.py
 snapshot_pro_etl/data_sync.py
 snapshot_pro_etl/asset_management.py
 snapshot_pro_etl/pod_helpers.py
-
-# Also ignore irrelevant files
-.airflowignore
-etl_requirements.txt
