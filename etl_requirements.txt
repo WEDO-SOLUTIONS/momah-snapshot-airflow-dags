@@ -1,0 +1,6 @@
+requests
+python-dateutil
+boto3
+s3fs
+pandas
+apache-airflow-providers-cncf-kubernetes
