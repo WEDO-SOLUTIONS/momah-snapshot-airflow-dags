@@ -9,7 +9,7 @@ setup(
     install_requires=[
         "requests",
         "python-dateutil",
-        "boto3",
+        "boto3==1.35.95",
         "s3fs",
         "pandas",
         "apache-airflow-providers-cncf-kubernetes",
