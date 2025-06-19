@@ -1,0 +1,4 @@
+# This is a recursive glob pattern.
+# It tells Airflow: "ignore any file inside any directory named snapshot_pro_etl".
+# This is more robust than a simple directory name.
+**/snapshot_pro_etl/*

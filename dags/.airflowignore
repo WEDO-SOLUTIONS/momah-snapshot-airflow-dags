@@ -1,3 +1,0 @@
-# Ignore the entire ETL library package, as it does not contain DAGs.
-# This will prevent the "Broken DAG" error for library files.
-snapshot_pro_etl
