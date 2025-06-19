@@ -1,18 +1,17 @@
-# /dags/vpc_amn_mun_management_dag.py
 import pendulum
 import logging
 from airflow.models.dag import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models.param import Param
 
-# Import from our custom package
-from snapshot_pro_etl import asset_management
-from snapshot_pro_etl.mappers import vpc_amn_mun
-from snapshot_pro_etl.pod_helpers import get_pod_override_config
+# UPDATED IMPORT PATH
+from dags.snapshot_pro_etl import asset_management
+from dags.snapshot_pro_etl.mappers import vpc_amn_mun
+from dags.snapshot_pro_etl.pod_helpers import get_pod_override_config
 
 log = logging.getLogger(__name__)
 
-# --- DAG Configuration ---
+# --- Configuration ---
 SCHEMA_NAME = "vpc_amn_mun"
 GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.git"
 GIT_BRANCH = "main"
@@ -30,7 +29,7 @@ def _run_management_task(**context):
     else:
         raise ValueError(f"Unknown operation: {operation}")
 
-# This DAG is for manually managing Urbi Pro assets.
+# This DAG is for manually managing Snapshot Pro assets.
 with DAG(
     dag_id=f"{SCHEMA_NAME}_01_asset_management",
     start_date=pendulum.datetime(2025, 1, 1, tz="Asia/Riyadh"),
