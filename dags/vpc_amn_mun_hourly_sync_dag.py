@@ -17,8 +17,6 @@ log = logging.getLogger(__name__)
 
 # --- Configuration ---
 SCHEMA_NAME = "vpc_amn_mun"
-GIT_REPO_URL = "https://github.com/WEDO-SOLUTIONS/momah-snapshot-airflow-dags.git"
-GIT_BRANCH = "main"
 # ---
 
 def _fetch_and_chunk_upserts(**context):
@@ -149,7 +147,7 @@ with DAG(
     )
     
     # CORRECTED: Call the helper function with arguments
-    pod_override = get_pod_override_config(GIT_REPO_URL, GIT_BRANCH)
+    pod_override = get_pod_override_config()
 
     push_chunks_task = PythonOperator.partial(
         task_id="push_upsert_chunk",

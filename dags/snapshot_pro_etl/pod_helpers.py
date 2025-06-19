@@ -1,19 +1,16 @@
-# /snapshot_pro_etl/pod_helpers.py
 from kubernetes.client import models as k8s
 
-def get_pod_override_config(git_repo_url: str, git_branch: str) -> dict:
+def get_pod_override_config() -> dict:
     """
-    Returns the executor_config for a pod that installs dependencies
-    into a temporary, writable directory to avoid permissions issues.
+    Returns a simplified pod_override.
+    It ONLY overrides the main container's image and command, assuming
+    the system's default git-sync is already providing the code volume.
     """
-    # This shell command does four things:
-    # 1. Creates a writable directory at /tmp/packages.
-    # 2. Tells pip to install all packages from setup.py into that target directory.
-    # 3. Adds that directory to the PYTHONPATH so Python can find the libraries.
-    # 4. Executes the airflow task.
+    # This command creates a writable directory for pip, installs the project,
+    # adds it to the path, and then runs the airflow task.
     install_and_run_command = (
         "mkdir -p /tmp/packages && "
-        "pip install --no-cache-dir --target /tmp/packages /repo/. && "
+        "pip install --no-cache-dir --target /tmp/packages /opt/airflow/dags/repo/. && "
         "export PYTHONPATH=${PYTHONPATH}:/tmp/packages && "
         "exec airflow tasks run {{ ti.dag_id }} {{ ti.task_id }} {{ ti.run_id }} --local"
     )
@@ -21,36 +18,17 @@ def get_pod_override_config(git_repo_url: str, git_branch: str) -> dict:
     return {
         "pod_override": k8s.V1Pod(
             spec=k8s.V1PodSpec(
-                init_containers=[
-                    k8s.V1Container(
-                        name="git-sync-init",
-                        image="registry.k8s.io/git-sync/git-sync:v4.3.0",
-                        args=[
-                            f"--repo={git_repo_url}",
-                            f"--branch={git_branch}",
-                            "--root=/repo",
-                            "--one-time",
-                            "--depth=1",
-                        ],
-                        volume_mounts=[
-                            k8s.V1VolumeMount(name="repo-storage", mount_path="/repo")
-                        ],
-                    )
-                ],
                 containers=[
                     k8s.V1Container(
+                        # This name 'base' is required by Airflow
                         name="base",
+                        # Use a lightweight, public Python image
                         image="python:3.9-slim",
+                        # The command to run inside the container
                         command=["/bin/sh", "-c"],
-                        args=[install_and_run_command], # Use the robust command
-                        volume_mounts=[
-                            k8s.V1VolumeMount(name="repo-storage", mount_path="/repo")
-                        ],
+                        args=[install_and_run_command]
                     )
-                ],
-                volumes=[
-                    k8s.V1Volume(name="repo-storage", empty_dir=k8s.V1EmptyDirVolumeSource())
-                ],
+                ]
             )
         )
     }
