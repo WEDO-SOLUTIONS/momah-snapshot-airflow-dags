@@ -14,7 +14,7 @@ from airflow.exceptions import AirflowException
 from dateutil.parser import parse as date_parse
 
 from include.vpamnmun_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from hooks.urbi_pro_hook import UrbiProHook
+from plugins.hooks.urbi_pro_hook import UrbiProHook
 
 log = logging.getLogger(__name__)
 

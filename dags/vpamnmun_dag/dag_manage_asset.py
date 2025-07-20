@@ -12,7 +12,7 @@ from airflow.models.variable import Variable
 from airflow.providers.oracle.hooks.oracle import OracleHook
 
 from include.vpamnmun_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from hooks.urbi_pro_hook import UrbiProHook
+from plugins.hooks.urbi_pro_hook import UrbiProHook
 
 # --- DAG Definition ---
 @dag(
