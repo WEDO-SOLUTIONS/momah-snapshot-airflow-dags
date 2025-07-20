@@ -3,6 +3,7 @@ import os
 from pendulum import datetime
 from typing import Any, Dict, List, Optional
 import logging
+import math
 
 # Add the project's root directory to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -10,168 +11,200 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from airflow.decorators import dag, task
 from airflow.models.variable import Variable
 from airflow.providers.oracle.hooks.oracle import OracleHook
-from airflow.exceptions import AirflowException
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from dateutil.parser import parse as date_parse
 
 from include.vpamnmun_dag.attribute_mapper import ATTRIBUTE_MAPPER
 from plugins.hooks.urbi_pro_hook import UrbiProHook
 
 log = logging.getLogger(__name__)
+DB_CONN_ID = "oracle_db_conn"
+API_CONN_ID = "urbi_pro_api_conn"
+DB_FETCH_CHUNK_SIZE = 50000  # How many records to pull from Oracle at a time
+API_PUSH_CHUNK_SIZE = 100    # How many records to push to the API in a single call
 
-# --- Reusable Helper Functions ---
-
-def validate_and_convert_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Validates a row and converts it to a GeoJSON feature."""
-    if not all(row.get(key) for key in ["id", "last_modified_date", "latitude", "longitude"]):
-        log.warning(f"Skipping record due to missing core data: {row.get('id')}")
+# --- (The validate_and_convert_row helper function remains the same) ---
+def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> Optional[Dict[str, Any]]:
+    """
+    Performs detailed validation on a single database row and converts it to a GeoJSON feature.
+    Returns None if the row is invalid.
+    """
+    if not all(row.get(key) for key in ["id", "last_modified_date"]):
+        log.warning(f"Skipping record due to missing id or last_modified_date.")
         return None
-    
+
     properties = {}
     for db_col, map_info in ATTRIBUTE_MAPPER.items():
         value = row.get(db_col)
-        if map_info.get("mandatory") and value is None:
+        is_mandatory = map_info.get("mandatory", False)
+
+        if is_mandatory and value is None:
             log.warning(f"Skipping record {row.get('id')} due to missing mandatory attribute: {db_col}")
             return None
-        properties[db_col] = value
-    
-    try:
-        lon, lat = float(properties["longitude"]), float(properties["latitude"])
-    except (ValueError, TypeError):
-        log.warning(f"Skipping record {row.get('id')} due to invalid coordinates.")
-        return None
         
+        if value is None:
+            properties[db_col] = None
+            continue
+        
+        if map_info["type"] == "date_time":
+            try:
+                dt_obj = date_parse(value, dayfirst=True) if isinstance(value, str) else value
+                properties[db_col] = dt_obj.isoformat()
+            except (ValueError, TypeError):
+                log.warning(f"Invalid date format for record {row.get('id')}, attribute '{db_col}'. Setting to null.")
+                properties[db_col] = None
+        else:
+            properties[db_col] = value
+
+    if primary_name_column and (primary_name_val := row.get(primary_name_column)):
+        properties[f"{primary_name_column}_ns"] = str(primary_name_val)
+
+    lon = properties.get('longitude')
+    lat = properties.get('latitude')
+
+    if lon is None or lat is None:
+        log.warning(f"Skipping record {row.get('id')} due to missing longitude/latitude.")
+        return None
+    try:
+        lon_float, lat_float = float(lon), float(lat)
+    except (ValueError, TypeError):
+        log.warning(f"Skipping record {row.get('id')} because longitude/latitude are not valid numbers.")
+        return None
+    if not (-180 <= lon_float <= 180):
+        log.warning(f"Skipping record {row.get('id')} due to out-of-bounds longitude: {lon_float}")
+        return None
+    if not (-90 <= lat_float <= 90):
+        log.warning(f"Skipping record {row.get('id')} due to out-of-bounds latitude: {lat_float}")
+        return None
+    
     return {
-        "type": "Feature",
-        "id": str(row["id"]),
-        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+        "type": "Feature", "id": str(row["id"]),
+        "geometry": {"type": "Point", "coordinates": [lon_float, lat_float]},
         "properties": properties
     }
-
 
 # --- DAG Definition ---
 @dag(
     dag_id="vpamnmun_sync_data",
     start_date=datetime(2025, 1, 1),
-    schedule="@hourly",
+    schedule="0 */6 * * *",
     catchup=False,
     tags=["urbi_pro", "vpamnmun", "data_sync"],
-    doc_md="Hourly sync of MOMRAH priority areas data to the Urbi Pro dynamic asset."
+    doc_md="""
+    ### Vpamnmun Full Data Sync
+    Performs a full data sync from the Oracle view to the Urbi Pro dynamic asset.
+    - **Step 1**: Triggers the `vpamnmun_manage_asset` DAG to update the asset schema.
+    - **Step 2**: If the schema update succeeds, it proceeds to sync all data.
+    """
 )
 def sync_data_dag():
 
-    @task
-    def get_last_run_state(**context) -> Dict[str, Any]:
-        """Gets state from the previous run or initializes it for the first run."""
-        prev_run_ts = context.get("data_interval_end")
-        
-        if prev_run_ts:
-            start_sync_timestamp = prev_run_ts.to_iso8601_string()
-        else: # First run
-            start_sync_timestamp = "1970-01-01T00:00:00+00:00"
-            log.warning("No previous successful run found. Syncing from the beginning of time.")
-
-        last_known_ids = Variable.get("vpamnmun_known_ids", default_var=[], deserialize_json=True)
-        log.info(f"Starting sync for data since: {start_sync_timestamp}")
-        log.info(f"Found {len(last_known_ids)} known IDs from previous run.")
-        
-        return {
-            "start_sync_timestamp": start_sync_timestamp,
-            "last_known_ids": last_known_ids,
-            "current_run_timestamp": context["ts"]
-        }
+    update_asset_schema = TriggerDagRunOperator(
+        task_id="update_asset_schema",
+        trigger_dag_id="vpamnmun_manage_asset",
+        wait_for_completion=True,
+        conf={"operation": "UPDATE"},
+        deferrable=True,
+        failed_states=["failed", "skipped"],
+    )
 
     @task
-    def process_upserts(state: Dict[str, Any]) -> Dict[str, List[Dict]]:
-        """Fetches and processes new/updated records from the database."""
-        oracle_hook = OracleHook(oracle_conn_id="oracle_db_conn")
+    def get_record_count_and_generate_chunks() -> List[Dict]:
+        """Counts total records and creates a list of chunks to process."""
+        oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
         db_view = Variable.get("vpamnmun_db_view_name")
-        sql_path = os.path.join(os.path.dirname(__file__), '..', '..', 'include/vpamnmun_dag/sql/get_records_since.sql')
+        sql = f'SELECT COUNT(*) FROM {db_view}'
+        total_records = oracle_hook.get_first(sql)[0] or 0
+        log.info(f"Found {total_records} total records in the source view.")
+        num_chunks = math.ceil(total_records / DB_FETCH_CHUNK_SIZE)
+        chunks = [{"limit": DB_FETCH_CHUNK_SIZE, "offset": i * DB_FETCH_CHUNK_SIZE} for i in range(num_chunks)]
+        log.info(f"Generated {len(chunks)} chunks to process in parallel.")
+        return chunks
 
-        with open(sql_path) as f:
-            sql = f.read().replace(":db_view", db_view)
-
-        records = oracle_hook.get_records(sql, parameters={"ts": state["start_sync_timestamp"]})
+    @task
+    def process_and_push_chunk(chunk_info: Dict):
+        """Fetches a large chunk from the DB, then pushes to the API in smaller batches of 100."""
+        limit = chunk_info["limit"]
+        offset = chunk_info["offset"]
+        log.info(f"Processing DB chunk: offset={offset}, limit={limit}")
+        
+        oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
+        db_view = Variable.get("vpamnmun_db_view_name")
+        asset_config = Variable.get("vpamnmun_asset_config", deserialize_json=True)
+        primary_name_col = asset_config.get("primary_name_column", "")
+        
+        sql = f'SELECT * FROM {db_view} ORDER BY "id" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
+        records = oracle_hook.get_records(sql, parameters={"offset": offset, "limit": limit})
         
         features_to_upsert = []
         if records:
-            for row in records:
-                feature = validate_and_convert_row(dict(row))
+            for row_tuple in records:
+                row_dict = dict(zip([d[0].lower() for d in oracle_hook.description], row_tuple))
+                feature = validate_and_convert_row(row_dict, primary_name_col)
                 if feature:
                     features_to_upsert.append(feature)
-        
-        log.info(f"Found {len(features_to_upsert)} records to add/update.")
-        return {"features": features_to_upsert}
-        
-    @task
-    def push_upserts_to_urbi(data: Dict[str, List[Dict]]):
-        """Pushes data chunks to the Urbi Pro API."""
-        features = data["features"]
-        if not features:
-            log.info("No records to upsert. Skipping.")
+
+        if not features_to_upsert:
+            log.info("No valid features found in this DB chunk. Skipping.")
             return
 
-        api_hook = UrbiProHook(http_conn_id="urbi_pro_api_conn")
+        log.info(f"DB chunk processing complete. Found {len(features_to_upsert)} valid records to push.")
+        api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
         asset_id = Variable.get("vpamnmun_dynamic_asset_id")
         token = Variable.get("vpamnmun_push_data_access_token")
 
-        # In a real scenario with massive data, you would chunk this list
-        # and use .expand() for parallel pushes. For simplicity here, we push as one.
-        api_hook.push_data(asset_id, token, features, is_delete=False)
-        log.info(f"Successfully pushed {len(features)} upserts.")
+        # NEW: Loop through the features and push them in batches of 100
+        for i in range(0, len(features_to_upsert), API_PUSH_CHUNK_SIZE):
+            batch = features_to_upsert[i:i + API_PUSH_CHUNK_SIZE]
+            log.info(f"Pushing an API batch of {len(batch)} records...")
+            api_hook.push_data(asset_id, token, batch, is_delete=False)
         
+        log.info(f"All API batches for this DB chunk have been pushed successfully.")
+
     @task
-    def process_deletes(state: Dict[str, Any]) -> Dict[str, List[str]]:
-        """Compares current DB state with the last known state to find deletions."""
-        last_known_ids_set = set(state["last_known_ids"])
+    def process_and_push_deletes() -> List[str]:
+        """Compares DB state with the last known state to find and push deletions in batches."""
+        last_known_ids = Variable.get("vpamnmun_known_ids", default_var=[], deserialize_json=True)
+        last_known_ids_set = set(last_known_ids)
         
-        oracle_hook = OracleHook(oracle_conn_id="oracle_db_conn")
+        oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
         db_view = Variable.get("vpamnmun_db_view_name")
-        sql_path = os.path.join(os.path.dirname(__file__), '..', '..', 'include/vpamnmun_dag/sql/get_all_current_ids.sql')
+        sql = f'SELECT "id" FROM {db_view}'
 
-        with open(sql_path) as f:
-            sql = f.read().replace(":db_view", db_view)
-
-        current_ids_list = oracle_hook.get_first(sql)
-        current_ids_set = set(str(item[0]) for item in current_ids_list) if current_ids_list else set()
-
+        records = oracle_hook.get_records(sql)
+        current_ids_set = {str(item[0]) for item in records} if records else set()
         ids_to_delete = list(last_known_ids_set - current_ids_set)
-        log.info(f"Found {len(ids_to_delete)} records to delete.")
-        return {"ids_to_delete": ids_to_delete, "all_current_ids": list(current_ids_set)}
-    
-    @task
-    def push_deletes_to_urbi(data: Dict[str, List[str]]):
-        """Pushes deletion requests to the Urbi Pro API."""
-        ids = data["ids_to_delete"]
-        if not ids:
-            log.info("No records to delete. Skipping.")
-            return
-
-        api_hook = UrbiProHook(http_conn_id="urbi_pro_api_conn")
-        asset_id = Variable.get("vpamnmun_dynamic_asset_id")
-        token = Variable.get("vpamnmun_push_data_access_token")
         
-        # In a real scenario with massive data, you would chunk this list
-        api_hook.push_data(asset_id, token, ids, is_delete=True)
-        log.info(f"Successfully pushed {len(ids)} deletions.")
+        if not ids_to_delete:
+            log.info("No records to delete.")
+        else:
+            log.info(f"Found {len(ids_to_delete)} records to delete. Pushing to API in batches...")
+            api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+            asset_id = Variable.get("vpamnmun_dynamic_asset_id")
+            token = Variable.get("vpamnmun_push_data_access_token")
+            
+            # NEW: Loop through the IDs and push them in batches of 100
+            for i in range(0, len(ids_to_delete), API_PUSH_CHUNK_SIZE):
+                batch = ids_to_delete[i:i + API_PUSH_CHUNK_SIZE]
+                log.info(f"Pushing an API batch of {len(batch)} deletions...")
+                api_hook.push_data(asset_id, token, batch, is_delete=True)
+
+        return list(current_ids_set)
 
     @task
-    def update_final_state(delete_data: Dict[str, List[str]]):
-        """Saves the new complete list of object IDs as an Airflow Variable for the next run."""
-        final_id_list = delete_data["all_current_ids"]
-        Variable.set("vpamnmun_known_ids", final_id_list, serialize_json=True)
-        log.info(f"Successfully updated final state with {len(final_id_list)} IDs.")
+    def update_final_state(all_current_ids: List[str]):
+        """Saves the new complete list of object IDs as an Airflow Variable."""
+        Variable.set("vpamnmun_known_ids", all_current_ids, serialize_json=True)
+        log.info(f"Successfully updated final state with {len(all_current_ids)} IDs.")
 
     # --- Task Dependencies ---
-    run_state = get_last_run_state()
-    
-    upsert_data = process_upserts(run_state)
-    push_upserts_to_urbi(upsert_data)
-    
-    delete_data = process_deletes(run_state)
-    push_deletes_to_urbi(delete_data)
-    
-    # The final state update depends on the deletion process, which gives the full current ID list
-    update_final_state(delete_data)
+    chunks_to_process = get_record_count_and_generate_chunks()
+    current_ids_list = process_and_push_deletes()
 
+    update_asset_schema >> [chunks_to_process, current_ids_list]
+    
+    process_and_push_chunk.expand(chunk_info=chunks_to_process)
+    
+    update_final_state(current_ids_list)
 
 sync_data_dag()
