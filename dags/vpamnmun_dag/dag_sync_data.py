@@ -141,7 +141,7 @@ def sync_data_dag():
         features_to_upsert = []
         if records:
             for row_tuple in records:
-                row_dict = dict(zip([d[0].lower() for d in oracle_hook.description], row_tuple))
+                row_dict = dict(zip([d[0].lower() for d in oracle_hook.descriptions], row_tuple))
                 feature = validate_and_convert_row(row_dict, primary_name_col)
                 if feature:
                     features_to_upsert.append(feature)
