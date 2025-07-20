@@ -100,7 +100,8 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
 
     dag_id = "all_incidents_sync_data",
     start_date = datetime(2025, 1, 1),
-    schedule = "0 */6 * * *",
+    #schedule = "0 */6 * * *",
+    schedule_interval="0 */6 * * *",
     catchup = False,
     max_active_runs = 1,
     tags = ["urbi_pro", "all_incidents", "data_sync"],
