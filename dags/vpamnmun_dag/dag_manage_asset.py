@@ -11,6 +11,7 @@ from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.models.variable import Variable
 from airflow.providers.oracle.hooks.oracle import OracleHook
+from airflow.exceptions import AirflowException
 from dateutil.parser import parse as date_parse
 
 from include.vpamnmun_dag.attribute_mapper import ATTRIBUTE_MAPPER
@@ -118,13 +119,13 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
     ### Manage Urbi Pro Dynamic Asset
     This DAG allows you to CREATE, UPDATE, or CLEAR data from a dynamic asset.
     - **CREATE**: Creates a new asset and saves the ID/Token as Airflow Variables.
-    - **UPDATE**: Updates an existing asset's schema (attributes and filters).
-    - **CLEAR_ALL_DATA**: Deletes all data objects from an asset.
+    - **UPDATE**: Updates an existing asset's schema. If `asset_id` is left blank, it will use the one from the 'vpamnmun_dynamic_asset_id' Variable.
+    - **CLEAR_ALL_DATA**: Deletes all data from an asset. If params are left blank, it will use the values from Airflow Variables.
     """,
     params={
         "operation": Param("CREATE", type="string", enum=["CREATE", "UPDATE", "CLEAR_ALL_DATA"]),
-        "asset_id": Param("", type=["null", "string"], description="Required for UPDATE and CLEAR_ALL_DATA. For UPDATE, get this from the 'vpamnmun_dynamic_asset_id' Variable."),
-        "push_data_access_token": Param("", type=["null", "string"], description="Required for CLEAR_ALL_DATA. Get this from the 'vpamnmun_push_data_access_token' Variable."),
+        "asset_id": Param("", type=["null", "string"], description="Optional. If blank, the DAG will use the 'vpamnmun_dynamic_asset_id' Variable."),
+        "push_data_access_token": Param("", type=["null", "string"], description="Optional. If blank, the DAG will use the 'vpamnmun_push_data_access_token' Variable."),
         "db_conn_id": Param("oracle_db_conn", type="string"),
         "api_conn_id": Param("urbi_pro_api_conn", type="string"),
     },
@@ -137,8 +138,24 @@ def manage_asset_dag():
         op = params["operation"]
         api_hook = UrbiProHook(http_conn_id=params["api_conn_id"])
 
+        # --- NEW: Automatically get credentials from Variables if not provided ---
+        asset_id = params.get("asset_id")
+        token = params.get("push_data_access_token")
+
+        if op in ["UPDATE", "CLEAR_ALL_DATA"] and not asset_id:
+            log.info("Asset ID not provided, fetching from Airflow Variable...")
+            asset_id = Variable.get("vpamnmun_dynamic_asset_id", default_var=None)
+            if not asset_id:
+                raise AirflowException("Asset ID is required for this operation and was not found in params or Variables.")
+        
+        if op == "CLEAR_ALL_DATA" and not token:
+            log.info("Push token not provided, fetching from Airflow Variable...")
+            token = Variable.get("vpamnmun_push_data_access_token", default_var=None)
+            if not token:
+                raise AirflowException("Push data access token is required for this operation and was not found in params or Variables.")
+        # --- End of new logic ---
+
         if op in ["CREATE", "UPDATE"]:
-            # 1. Build the full schema payload, now including filters
             oracle_hook = OracleHook(oracle_conn_id=params["db_conn_id"])
             attributes, filters = _build_schema_from_db(oracle_hook)
             
@@ -159,11 +176,8 @@ def manage_asset_dag():
                 "filters": filters
             }
 
-            # 2. Execute API call
-            asset_id_to_update = params["asset_id"] if op == "UPDATE" else None
-            response = api_hook.create_or_update_asset(payload, asset_id=asset_id_to_update)
+            response = api_hook.create_or_update_asset(payload, asset_id=(asset_id if op == 'UPDATE' else None))
 
-            # 3. If CREATE, save new credentials as Variables
             if op == "CREATE":
                 new_asset_id = response.get("asset_id")
                 new_token = response.get("access_token")
@@ -173,15 +187,12 @@ def manage_asset_dag():
                     log.info("SUCCESS: Asset created. New ID and Token saved as Airflow Variables.")
                 else:
                     raise ValueError("API response for CREATE did not contain asset_id and access_token.")
+            else:
+                 log.info(f"SUCCESS: Asset {asset_id} updated.")
             
             return {"status": "SUCCESS", "operation": op, "response": response}
 
         elif op == "CLEAR_ALL_DATA":
-            asset_id = params["asset_id"]
-            token = params["push_data_access_token"]
-            if not asset_id or not token:
-                raise ValueError("For CLEAR_ALL_DATA, asset_id and push_data_access_token params are required.")
-            
             api_hook.clear_all_asset_data(asset_id, token)
             return {"status": "SUCCESS", "operation": op}
 
