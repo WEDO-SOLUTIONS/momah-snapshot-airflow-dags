@@ -90,6 +90,7 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     schedule="0 */6 * * *",
     catchup=False,
     tags=["urbi_pro", "vpamnmun", "data_sync"],
+    max_active_runs=1,
     doc_md="""
     ### Vpamnmun Full Data Sync
     Performs a full data sync from the Oracle view to the Urbi Pro dynamic asset.

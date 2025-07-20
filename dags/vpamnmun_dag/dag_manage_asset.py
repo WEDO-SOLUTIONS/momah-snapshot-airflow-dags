@@ -129,6 +129,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
         "db_conn_id": Param("oracle_db_conn", type="string"),
         "api_conn_id": Param("urbi_pro_api_conn", type="string"),
     },
+    max_active_runs=1,
 )
 def manage_asset_dag():
     
