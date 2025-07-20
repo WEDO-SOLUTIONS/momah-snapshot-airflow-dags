@@ -20,8 +20,8 @@ from plugins.hooks.urbi_pro_hook import UrbiProHook
 log = logging.getLogger(__name__)
 DB_CONN_ID = "oracle_db_conn"
 API_CONN_ID = "urbi_pro_api_conn"
-DB_FETCH_CHUNK_SIZE = 50000  # How many records to pull from Oracle at a time
-API_PUSH_CHUNK_SIZE = 100    # How many records to push to the API in a single call
+DB_FETCH_CHUNK_SIZE = 50000
+API_PUSH_CHUNK_SIZE = 100
 
 # --- (The validate_and_convert_row helper function remains the same) ---
 def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> Optional[Dict[str, Any]]:
@@ -105,7 +105,8 @@ def sync_data_dag():
         wait_for_completion=True,
         conf={"operation": "UPDATE"},
         deferrable=True,
-        failed_states=["failed", "skipped"],
+        # CORRECTED: Removed 'skipped' as it's not valid in Airflow 2.10.5
+        failed_states=["failed"],
     )
 
     @task
@@ -153,7 +154,6 @@ def sync_data_dag():
         asset_id = Variable.get("vpamnmun_dynamic_asset_id")
         token = Variable.get("vpamnmun_push_data_access_token")
 
-        # NEW: Loop through the features and push them in batches of 100
         for i in range(0, len(features_to_upsert), API_PUSH_CHUNK_SIZE):
             batch = features_to_upsert[i:i + API_PUSH_CHUNK_SIZE]
             log.info(f"Pushing an API batch of {len(batch)} records...")
@@ -175,20 +175,19 @@ def sync_data_dag():
         current_ids_set = {str(item[0]) for item in records} if records else set()
         ids_to_delete = list(last_known_ids_set - current_ids_set)
         
-        if not ids_to_delete:
-            log.info("No records to delete.")
-        else:
+        if ids_to_delete:
             log.info(f"Found {len(ids_to_delete)} records to delete. Pushing to API in batches...")
             api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
             asset_id = Variable.get("vpamnmun_dynamic_asset_id")
             token = Variable.get("vpamnmun_push_data_access_token")
             
-            # NEW: Loop through the IDs and push them in batches of 100
             for i in range(0, len(ids_to_delete), API_PUSH_CHUNK_SIZE):
                 batch = ids_to_delete[i:i + API_PUSH_CHUNK_SIZE]
                 log.info(f"Pushing an API batch of {len(batch)} deletions...")
                 api_hook.push_data(asset_id, token, batch, is_delete=True)
-
+        else:
+            log.info("No records to delete.")
+        
         return list(current_ids_set)
 
     @task
