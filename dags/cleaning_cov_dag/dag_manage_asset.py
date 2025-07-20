@@ -202,9 +202,9 @@ def manage_asset_dag():
             api_hook.clear_all_asset_data(asset_id)
 
             # Reset the sync DAG's state to an empty list.
-            Variable.set("cleaning_cov_incidents_known_ids", [], serialize_json=True)
+            Variable.set("cleaning_cov_known_ids", [], serialize_json=True)
 
-            log.info("SUCCESS: Cleared all data from asset and reset the 'cleaning_cov_incidents_known_ids' state Variable.")
+            log.info("SUCCESS: Cleared all data from asset and reset the 'cleaning_cov_known_ids' state Variable.")
 
             return {"status": "SUCCESS", "operation": op}
 

@@ -20,8 +20,8 @@ ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
     "resolution_date_crm": {"en": "Resolution Date", "ar": "تاريخ الحل", "type": "string", "mandatory": False},
     "area_type": {"en": "Area Type", "ar": "نوع المنطقة", "type": "string", "mandatory": False},
     "num_incidents": {"en": "Incident Count", "ar": "عدد البلاغات", "type": "number", "mandatory": False},
-    "contracting_company_ar": {"en": "Contracting Company", "ar": "الشركة المتعاقدة", "type": "string", "mandatory": False},
-    "inspector_ar_name": {"en": "Inspector Name", "ar": "اسم المفتش", "type": "string", "mandatory": False},
+    "contracting_company_name_ar": {"en": "Contracting Company Name (AR)", "ar": "اسم الشركة المتعاقدة", "type": "string", "mandatory": False},
+    "inspector_name_ar": {"en": "Inspector Name (AR)", "ar": "اسم المفتش", "type": "string", "mandatory": False},
     "track_email": {"en": "Track Email", "ar": "البريد الإلكتروني", "type": "string", "mandatory": False},
 
 }
