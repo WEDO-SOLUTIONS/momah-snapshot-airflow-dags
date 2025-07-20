@@ -24,9 +24,6 @@ class UrbiProHook(HttpHook):
     def create_or_update_asset(self, payload: Dict[str, Any], asset_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Creates a new dynamic asset or updates an existing one.
-
-        :param payload: The full JSON payload for the asset schema.
-        :param asset_id: The ID of the asset to update. If None, a new asset is created.
         """
         headers = self._get_auth_and_brand_headers()
         endpoint = "/dynamic_asset"
@@ -44,15 +41,15 @@ class UrbiProHook(HttpHook):
         response.raise_for_status()
         return response.json()
 
-    def clear_all_asset_data(self, asset_id: str, access_token: str) -> None:
+    # --- CORRECTED CODE STARTS HERE ---
+    def clear_all_asset_data(self, asset_id: str) -> None:
         """
-        Deletes all data objects from a dynamic asset.
+        Deletes all data objects from a dynamic asset using the master token.
 
         :param asset_id: The ID of the asset to clear.
-        :param access_token: The specific push data access token for the asset.
         """
+        # This method now uses the default headers, which contain the master token.
         headers = self._get_auth_and_brand_headers()
-        headers['Authorization'] = f'Bearer {access_token}'  # Use the push token for data operations
         endpoint = f"/dynamic_asset/{asset_id}/data/all"
         
         log.warning(f"Sending request to delete ALL DATA from asset: {asset_id}")
@@ -60,17 +57,14 @@ class UrbiProHook(HttpHook):
         response = self.run(endpoint=endpoint, headers=headers)
         response.raise_for_status()
         log.info(f"Successfully cleared all data from asset '{asset_id}'.")
+    # --- CORRECTED CODE ENDS HERE ---
 
     def push_data(self, asset_id: str, access_token: str, features: List[Dict], is_delete: bool = False) -> None:
         """
         Pushes a chunk of data (upserts or deletes) to the dynamic asset.
-
-        :param asset_id: The ID of the asset.
-        :param access_token: The push data access token.
-        :param features: A list of GeoJSON features for upserts, or a list of IDs for deletes.
-        :param is_delete: Set to True if this is a delete operation.
         """
         headers = self._get_auth_and_brand_headers()
+        # This operation correctly uses the specific push data token (access_token)
         headers['Authorization'] = f'Bearer {access_token}'
         endpoint = f"/dynamic_asset/{asset_id}/data"
 
