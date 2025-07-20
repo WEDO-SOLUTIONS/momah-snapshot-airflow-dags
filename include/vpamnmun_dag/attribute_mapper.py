@@ -2,10 +2,12 @@ from typing import Dict, Any
 
 # This dictionary maps DB column names to their display properties.
 ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
+
     # DB Column Name: { en: "English Caption", ar: "Arabic Caption", type: "api_type", mandatory: bool }
     "latitude": {"en": "Latitude", "ar": "خط العرض", "type": "number", "mandatory": True},
     "longitude": {"en": "Longitude", "ar": "خط الطول", "type": "number", "mandatory": True},
     "date": {"en": "Date", "ar": "التاريخ", "type": "date_time", "mandatory": True},
+    
     "amana_id": {"en": "Amana ID", "ar": "معرف الأمانة", "type": "string", "mandatory": False},
     "amana_name_ar": {"en": "Amana Name (AR)", "ar": "اسم الأمانة", "type": "string", "mandatory": False},
     "amana_name_en": {"en": "Amana Name (EN)", "ar": "اسم الأمانة (انجليزي)", "type": "string", "mandatory": False},
@@ -25,4 +27,5 @@ ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
     "street_inspected_area": {"en": "Street Inspected Area", "ar": "مساحة الشارع المفحوصة", "type": "string", "mandatory": False},
     "street_area": {"en": "Street Area", "ar": "مساحة الشارع", "type": "string", "mandatory": False},
     "units_calculated": {"en": "Units Calculated", "ar": "الوحدات المحسوبة", "type": "number", "mandatory": False},
+
 }
