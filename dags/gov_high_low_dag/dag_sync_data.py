@@ -63,6 +63,15 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     if primary_name_column and (primary_name_val := row.get(primary_name_column)):
         properties[f"{primary_name_column}_ns"] = str(primary_name_val)
 
+    vpi = properties.get('vpi')
+    cov = properties.get('coverage')
+
+    if vpi == 0:
+        properties['vpi'] = 0.1
+        
+    if cov == 0:
+        properties['coverage'] = 0.1
+
     lon = properties.get('longitude')
     lat = properties.get('latitude')
 
