@@ -12,9 +12,9 @@ from airflow.models.param import Param
 from airflow.models.variable import Variable
 from airflow.providers.oracle.hooks.oracle import OracleHook
 from airflow.exceptions import AirflowException
-from dateutil.parser import parse as date_parse
+from dateutil.parser import parse as date_parse 
 
-from include.com_license_info_dag.attribute_mapper import ATTRIBUTE_MAPPER
+from include.const_emtithal_cert_dag.attribute_mapper import ATTRIBUTE_MAPPER
 from plugins.hooks.urbi_pro_hook import UrbiProHook
 
 
@@ -23,9 +23,9 @@ log = logging.getLogger(__name__)
 
 # --- (The _build_schema_from_db helper function is unchanged) ---
 def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dict]]:
-    db_view = Variable.get("com_license_info_db_view_name")
+    db_view = Variable.get("const_emtithal_cert_db_view_name")
 
-    asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
+    asset_config = Variable.get("const_emtithal_cert_asset_config", deserialize_json=True)
 
     primary_name_col = asset_config.get("primary_name_column", "")
 
@@ -105,12 +105,12 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
 # --- DAG Definition ---
 @dag (
 
-    dag_id = "com_license_info_manage_asset",
+    dag_id = "const_emtithal_cert_manage_asset",
     start_date = datetime(2025, 1, 1),
     schedule = None,
     catchup = False,
     max_active_runs = 1,
-    tags = ["urbi_pro", "com_license_info", "asset_management"],
+    tags = ["urbi_pro", "const_emtithal_cert", "asset_management"],
     doc_md = """
     ### Manage Urbi Pro Dynamic Asset
     This DAG allows you to CREATE, UPDATE, or CLEAR data from a dynamic asset.
@@ -142,7 +142,7 @@ def manage_asset_dag():
         if op in ["UPDATE", "CLEAR_ALL_DATA"] and not asset_id:
             log.info("Asset ID not provided, fetching from Airflow Variable...")
 
-            asset_id = Variable.get("com_license_info_dynamic_asset_id", default_var=None)
+            asset_id = Variable.get("const_emtithal_cert_dynamic_asset_id", default_var=None)
 
             if not asset_id:
                 raise AirflowException("Asset ID is required for this operation and was not found in params or Variables.")
@@ -152,7 +152,7 @@ def manage_asset_dag():
 
             attributes, filters = _build_schema_from_db(oracle_hook)
 
-            asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
+            asset_config = Variable.get("const_emtithal_cert_asset_config", deserialize_json=True)
 
             payload = {
 
@@ -186,8 +186,8 @@ def manage_asset_dag():
                 new_token = response.get("access_token")
 
                 if new_asset_id and new_token:
-                    Variable.set("com_license_info_dynamic_asset_id", new_asset_id)
-                    Variable.set("com_license_info_push_data_access_token", new_token, serialize_json=False)
+                    Variable.set("const_emtithal_cert_dynamic_asset_id", new_asset_id)
+                    Variable.set("const_emtithal_cert_push_data_access_token", new_token, serialize_json=False)
 
                     log.info("SUCCESS: Asset created. New ID and Token saved as Airflow Variables.")
                 else:
@@ -202,9 +202,9 @@ def manage_asset_dag():
             api_hook.clear_all_asset_data(asset_id)
 
             # Reset the sync DAG's state to an empty list.
-            Variable.set("com_license_info_known_ids", [], serialize_json=True)
+            Variable.set("const_emtithal_cert_known_ids", [], serialize_json=True)
 
-            log.info("SUCCESS: Cleared all data from asset and reset the 'com_license_info_known_ids' state Variable.")
+            log.info("SUCCESS: Cleared all data from asset and reset the 'const_emtithal_cert_known_ids' state Variable.")
 
             return {"status": "SUCCESS", "operation": op}
 
