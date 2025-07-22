@@ -19,7 +19,5 @@ ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
     "street_area_km2": {"en": "Street Area (km²)", "ar": "مساحة الشوارع (كم²)", "type": "number", "mandatory": False},
     "street_inspected_area_km2": {"en": "Inspected Area (km²)", "ar": "المساحة المفتشة (كم²)", "type": "number", "mandatory": False},
     "coverage_percentage": {"en": "Coverage Percentage", "ar": "نسبة التغطية", "type": "number", "mandatory": False},
-    "id": {"en": "ID", "ar": "المعرف", "type": "string", "mandatory": False},
-    "last_modified_date": {"en": "Last Modified", "ar": "آخر تعديل", "type": "date_time", "mandatory": False},
 
 }
