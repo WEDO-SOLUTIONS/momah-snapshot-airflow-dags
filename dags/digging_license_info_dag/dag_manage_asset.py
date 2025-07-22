@@ -66,6 +66,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
 
                 if 0 < distinct_count <= 50:
                     filter_obj["control_type"] = "check_box_list"
+                    
                     sql_values = f'SELECT DISTINCT "{col_name}" FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
                     rows = oracle_hook.get_records(sql_values)
