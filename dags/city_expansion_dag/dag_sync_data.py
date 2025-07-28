@@ -15,7 +15,7 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from dateutil.parser import parse as date_parse
 
 from include.city_expansion_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from plugins.hooks.urbi_pro_hook import UrbiProHook
+from plugins.hooks.pro_hook import ProHook
 
 
 log = logging.getLogger(__name__)
@@ -211,7 +211,7 @@ def sync_data_dag():
 
         log.info(f"DB chunk processing complete. Found {len(features_to_upsert)} valid records to push.")
 
-        api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+        api_hook = ProHook(http_conn_id=API_CONN_ID)
 
         asset_id = Variable.get("city_expansion_dynamic_asset_id")
 
@@ -247,7 +247,7 @@ def sync_data_dag():
         if ids_to_delete:
             log.info(f"Found {len(ids_to_delete)} records to delete. Pushing to API in batches...")
 
-            api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+            api_hook = ProHook(http_conn_id=API_CONN_ID)
 
             asset_id = Variable.get("city_expansion_dynamic_asset_id")
 

@@ -8,7 +8,7 @@ from airflow.exceptions import AirflowException
 log = logging.getLogger(__name__)
 
 
-class UrbiProHook(HttpHook):
+class ProHook(HttpHook):
     """
     A custom Airflow Hook to interact with the Urbi Pro Dynamic Asset API.
     """

@@ -15,7 +15,7 @@ from airflow.exceptions import AirflowException
 from dateutil.parser import parse as date_parse
 
 from include.digging_license_info_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from plugins.hooks.urbi_pro_hook import UrbiProHook
+from plugins.hooks.pro_hook import ProHook
 
 
 log = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
 
                 if 0 < distinct_count <= 50:
                     filter_obj["control_type"] = "check_box_list"
-                    
+
                     sql_values = f'SELECT DISTINCT "{col_name}" FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
                     rows = oracle_hook.get_records(sql_values)
@@ -136,7 +136,7 @@ def manage_asset_dag():
 
         op = params["operation"]
 
-        api_hook = UrbiProHook(http_conn_id=params["api_conn_id"])
+        api_hook = ProHook(http_conn_id=params["api_conn_id"])
 
         asset_id = params.get("asset_id")
 

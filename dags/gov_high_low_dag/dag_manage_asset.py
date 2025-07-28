@@ -15,7 +15,7 @@ from airflow.exceptions import AirflowException
 from dateutil.parser import parse as date_parse
 
 from include.gov_high_low_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from plugins.hooks.urbi_pro_hook import UrbiProHook
+from plugins.hooks.pro_hook import ProHook
 
 
 log = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def manage_asset_dag():
 
         op = params["operation"]
 
-        api_hook = UrbiProHook(http_conn_id=params["api_conn_id"])
+        api_hook = ProHook(http_conn_id=params["api_conn_id"])
 
         asset_id = params.get("asset_id")
 

@@ -14,8 +14,8 @@ from airflow.providers.oracle.hooks.oracle import OracleHook
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from dateutil.parser import parse as date_parse
 
-from include.vpamnmun_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from plugins.hooks.urbi_pro_hook import UrbiProHook
+from include.vpamnmuntest_dag.attribute_mapper import ATTRIBUTE_MAPPER
+from plugins.hooks.pro_hook import ProHook
 
 
 log = logging.getLogger(__name__)
@@ -98,16 +98,16 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
 
 @dag (
         
-    dag_id = "vpamnmun_sync_data",
+    dag_id = "vpamnmuntest_sync_data",
     start_date = datetime(2025, 1, 1),
     schedule = "0 */6 * * *",
     catchup = False,
     max_active_runs = 1,
-    tags = ["urbi_pro", "vpamnmun", "data_sync"],
+    tags = ["urbi_pro", "vpamnmuntest", "data_sync"],
     doc_md = """
-    ### Vpamnmun Full Data Sync
+    ### vpamnmuntest Full Data Sync
     Performs a full data sync from the Oracle view to the Urbi Pro dynamic asset.
-    - **Step 1**: Triggers the `vpamnmun_manage_asset` DAG to update the asset schema.
+    - **Step 1**: Triggers the `vpamnmuntest_manage_asset` DAG to update the asset schema.
     - **Step 2**: If the schema update succeeds, it proceeds to sync all data.
     """
 
@@ -116,7 +116,7 @@ def sync_data_dag():
     update_asset_schema = TriggerDagRunOperator (
 
         task_id = "update_asset_schema",
-        trigger_dag_id = "vpamnmun_manage_asset",
+        trigger_dag_id = "vpamnmuntest_manage_asset",
         wait_for_completion = True,
         conf = {"operation": "UPDATE"},
         deferrable = True,
@@ -128,7 +128,7 @@ def sync_data_dag():
     def get_record_count_and_generate_chunks() -> List[Dict]:
         oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
 
-        db_view = Variable.get("vpamnmun_db_view_name")
+        db_view = Variable.get("vpamnmuntest_db_view_name")
 
         sql = f'SELECT COUNT(*) FROM {db_view}'
 
@@ -154,9 +154,9 @@ def sync_data_dag():
         
         oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
 
-        db_view = Variable.get("vpamnmun_db_view_name")
+        db_view = Variable.get("vpamnmuntest_db_view_name")
 
-        asset_config = Variable.get("vpamnmun_asset_config", deserialize_json=True)
+        asset_config = Variable.get("vpamnmuntest_asset_config", deserialize_json=True)
 
         primary_name_col = asset_config.get("primary_name_column", "")
         
@@ -191,11 +191,11 @@ def sync_data_dag():
 
         log.info(f"DB chunk processing complete. Found {len(features_to_upsert)} valid records to push.")
 
-        api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+        api_hook = ProHook(http_conn_id=API_CONN_ID)
 
-        asset_id = Variable.get("vpamnmun_dynamic_asset_id")
+        asset_id = Variable.get("vpamnmuntest_dynamic_asset_id")
 
-        token = Variable.get("vpamnmun_push_data_access_token")
+        token = Variable.get("vpamnmuntest_push_data_access_token")
 
         for i in range(0, len(features_to_upsert), API_PUSH_CHUNK_SIZE):
             batch = features_to_upsert[i:i + API_PUSH_CHUNK_SIZE]
@@ -208,13 +208,13 @@ def sync_data_dag():
 
     @task
     def process_and_push_deletes() -> List[str]:
-        last_known_ids = Variable.get("vpamnmun_known_ids", default_var=[], deserialize_json=True)
+        last_known_ids = Variable.get("vpamnmuntest_known_ids", default_var=[], deserialize_json=True)
 
         last_known_ids_set = set(last_known_ids)
         
         oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
 
-        db_view = Variable.get("vpamnmun_db_view_name")
+        db_view = Variable.get("vpamnmuntest_db_view_name")
 
         sql = f'SELECT "id" FROM {db_view}'
 
@@ -227,11 +227,11 @@ def sync_data_dag():
         if ids_to_delete:
             log.info(f"Found {len(ids_to_delete)} records to delete. Pushing to API in batches...")
 
-            api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+            api_hook = ProHook(http_conn_id=API_CONN_ID)
 
-            asset_id = Variable.get("vpamnmun_dynamic_asset_id")
+            asset_id = Variable.get("vpamnmuntest_dynamic_asset_id")
 
-            token = Variable.get("vpamnmun_push_data_access_token")
+            token = Variable.get("vpamnmuntest_push_data_access_token")
             
             for i in range(0, len(ids_to_delete), API_PUSH_CHUNK_SIZE):
                 batch = ids_to_delete[i:i + API_PUSH_CHUNK_SIZE]
@@ -246,7 +246,7 @@ def sync_data_dag():
 
     @task
     def update_final_state(all_current_ids: List[str]):
-        Variable.set("vpamnmun_known_ids", all_current_ids, serialize_json=True)
+        Variable.set("vpamnmuntest_known_ids", all_current_ids, serialize_json=True)
 
         log.info(f"Successfully updated final state with {len(all_current_ids)} IDs.")
 

@@ -15,7 +15,7 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from dateutil.parser import parse as date_parse
 
 from include.com_license_info_dag.attribute_mapper import ATTRIBUTE_MAPPER
-from plugins.hooks.urbi_pro_hook import UrbiProHook
+from plugins.hooks.pro_hook import ProHook
 
 
 log = logging.getLogger(__name__)
@@ -28,8 +28,8 @@ DB_FETCH_CHUNK_SIZE = 50000
 API_PUSH_CHUNK_SIZE = 100
 
 def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> Optional[Dict[str, Any]]:
-    if not all(row.get(key) for key in ["id", "last_modified_date"]):
-        log.warning(f"Skipping record due to missing id or last_modified_date.")
+    if not all(row.get(key) for key in ["ID", "LAST_MODIFIED_DATE"]):
+        log.warning(f"Skipping record due to missing ID or LAST_MODIFIED_DATE.")
 
         return None
     
@@ -41,7 +41,7 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
         is_mandatory = map_info.get("mandatory", False)
 
         if is_mandatory and value is None:
-            log.warning(f"Skipping record {row.get('id')} due to missing mandatory attribute: {db_col}")
+            log.warning(f"Skipping record {row.get('ID')} due to missing mandatory attribute: {db_col}")
 
             return None
         if value is None:
@@ -54,7 +54,7 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
 
                 properties[db_col] = dt_obj.isoformat()
             except (ValueError, TypeError):
-                log.warning(f"Invalid date format for record {row.get('id')}, attribute '{db_col}'. Setting to null.")
+                log.warning(f"Invalid date format for record {row.get('ID')}, attribute '{db_col}'. Setting to null.")
 
                 properties[db_col] = None
         else:
@@ -63,34 +63,34 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     if primary_name_column and (primary_name_val := row.get(primary_name_column)):
         properties[f"{primary_name_column}_ns"] = str(primary_name_val)
 
-    lon = properties.get('longitude')
-    lat = properties.get('latitude')
+    lon = properties.get('LONGITUDE')
+    lat = properties.get('LATITUDE')
 
     if lon is None or lat is None:
-        log.warning(f"Skipping record {row.get('id')} due to missing longitude/latitude.")
+        log.warning(f"Skipping record {row.get('ID')} due to missing LONGITUDE/LATITUDE.")
 
         return None
     
     try:
         lon_float, lat_float = float(lon), float(lat)
     except (ValueError, TypeError):
-        log.warning(f"Skipping record {row.get('id')} because longitude/latitude are not valid numbers.")
+        log.warning(f"Skipping record {row.get('ID')} because LONGITUDE/LATITUDE are not valid numbers.")
 
         return None
     
     if not (-180 <= lon_float <= 180):
-        log.warning(f"Skipping record {row.get('id')} due to out-of-bounds longitude: {lon_float}")
+        log.warning(f"Skipping record {row.get('ID')} due to out-of-bounds longitude: {lon_float}")
 
         return None
     
     if not (-90 <= lat_float <= 90):
-        log.warning(f"Skipping record {row.get('id')} due to out-of-bounds latitude: {lat_float}")
+        log.warning(f"Skipping record {row.get('ID')} due to out-of-bounds latitude: {lat_float}")
 
         return None
     
     return {
 
-        "type": "Feature", "id": str(row["id"]),
+        "type": "Feature", "id": str(row["ID"]),
         "geometry": {"type": "Point", "coordinates": [lon_float, lat_float]},
         "properties": properties
 
@@ -161,7 +161,7 @@ def sync_data_dag():
 
         primary_name_col = asset_config.get("primary_name_column", "")
         
-        sql = f'SELECT * FROM {db_view} ORDER BY "id" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
+        sql = f'SELECT * FROM {db_view} ORDER BY "ID" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
         
         features_to_upsert = []
         
@@ -192,7 +192,7 @@ def sync_data_dag():
 
         log.info(f"DB chunk processing complete. Found {len(features_to_upsert)} valid records to push.")
 
-        api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+        api_hook = ProHook(http_conn_id=API_CONN_ID)
 
         asset_id = Variable.get("com_license_info_dynamic_asset_id")
 
@@ -217,7 +217,7 @@ def sync_data_dag():
 
         db_view = Variable.get("com_license_info_db_view_name")
 
-        sql = f'SELECT "id" FROM {db_view}'
+        sql = f'SELECT "ID" FROM {db_view}'
 
         records = oracle_hook.get_records(sql)
 
@@ -228,7 +228,7 @@ def sync_data_dag():
         if ids_to_delete:
             log.info(f"Found {len(ids_to_delete)} records to delete. Pushing to API in batches...")
 
-            api_hook = UrbiProHook(http_conn_id=API_CONN_ID)
+            api_hook = ProHook(http_conn_id=API_CONN_ID)
 
             asset_id = Variable.get("com_license_info_dynamic_asset_id")
 
