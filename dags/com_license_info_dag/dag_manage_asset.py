@@ -21,15 +21,17 @@ from plugins.hooks.pro_hook import ProHook
 log = logging.getLogger(__name__)
 
 
-# --- (The _build_schema_from_db helper function is unchanged) ---
 def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dict]]:
     db_view = Variable.get("com_license_info_db_view_name")
 
     asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
 
-    primary_name_col = asset_config.get("primary_name_column", "")
+    primary_name_col = asset_config.get("primary_name_column", "").upper()  # Normalize to uppercase for comparison
 
     attributes, filters = [], []
+
+    # Create a case-insensitive version of ATTRIBUTE_MAPPER
+    ci_attribute_mapper = {k.upper(): v for k, v in ATTRIBUTE_MAPPER.items()}
 
     sql_get_cols = f'SELECT * FROM {db_view} WHERE ROWNUM = 1'
 
@@ -37,42 +39,84 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
         with conn.cursor() as cursor:
             cursor.execute(sql_get_cols)
 
-            db_columns = [desc[0].lower() for desc in cursor.description]
+            # Get column names as they appear in the database (preserving case)
+            db_columns = [desc[0] for desc in cursor.description]
 
     log.info(f"Detected columns from view: {db_columns}")
 
     for col_name in db_columns:
-        if col_name not in ATTRIBUTE_MAPPER:
-            log.warning(f"Column '{col_name}' not in ATTRIBUTE_MAPPER. Skipping.")
-
+        # Normalize column name to uppercase for comparison
+        normalized_col = col_name.upper()
+        
+        if normalized_col not in ci_attribute_mapper:
+            log.warning(f"Column '{col_name}' (normalized as '{normalized_col}') not in ATTRIBUTE_MAPPER. Skipping.")
+            
             continue
 
-        map_info = ATTRIBUTE_MAPPER[col_name]
+        # Use the original column name in queries but the normalized name for mapping
+        map_info = ci_attribute_mapper[normalized_col]
 
-        attribute = {"id": col_name, "type": map_info["type"], "caption": map_info["en"], "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}}
+        attribute = {
+
+            "id": col_name,  # Keep original column name as ID
+            "type": map_info["type"],
+            "caption": map_info["en"],
+
+            "localizations": {
+
+                "caption": {
+
+                    "en": map_info["en"],
+                    "ar": map_info["ar"]
+
+                }
+
+            }
+
+        }
 
         attributes.append(attribute)
 
-        if col_name == primary_name_col:
-             attributes.append({"id": f"{col_name}_ns", "type": "name", "caption": map_info["en"], "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}})
+        if normalized_col == primary_name_col:
+            attributes.append ({
 
-        filter_obj = {"attribute_id": col_name}
+                "id": f"{col_name}_ns",
+                "type": "name",
+                "caption": map_info["en"],
+
+                "localizations": {
+
+                    "caption": {
+
+                        "en": map_info["en"],
+                        "ar": map_info["ar"]
+
+                    }
+
+                }
+
+            })
+
+        filter_obj = {"attribute_id": col_name}  # Use original column name
 
         try:
             if map_info["type"] == "string":
+                # Use original column name in query but with proper quoting
                 sql_distinct = f'SELECT COUNT(DISTINCT "{col_name}") FROM {db_view}'
 
                 distinct_count = oracle_hook.get_first(sql_distinct)[0]
 
                 if 0 < distinct_count <= 50:
                     filter_obj["control_type"] = "check_box_list"
-                    sql_values = f'SELECT DISTINCT "{col_name}" FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
+                    sql_values = f'SELECT DISTINCT "{col_name}" FROM {db_view} WHERE "{col_name}" IS NOT NULL'
+                    
                     rows = oracle_hook.get_records(sql_values)
 
                     filter_obj["items"] = [{"value": str(r[0]), "caption": str(r[0])} for r in rows]
                 else:
                     filter_obj["control_type"] = "text_box"
+
             elif map_info["type"] in ["number", "date_time"]:
                 sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view}'
 
@@ -94,7 +138,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                         filter_obj["max"] = float(max_val)
         except Exception as e:
             log.error(f"Analysis failed for column '{col_name}', defaulting to text_box. Error: {e}")
-
+            
             filter_obj["control_type"] = "text_box"
 
         if "control_type" in filter_obj:
