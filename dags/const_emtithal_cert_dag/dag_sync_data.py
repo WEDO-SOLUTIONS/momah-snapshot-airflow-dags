@@ -69,8 +69,8 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     if primary_name_column and (primary_name_val := ci_row.get(primary_name_column.upper())):
         properties[f"{primary_name_column}_ns"] = str(primary_name_val)
 
-    lon = properties.get('longitude')
-    lat = properties.get('latitude')
+    lon = properties.get('LONGITUDE')
+    lat = properties.get('LATITUDE')
 
     if lon is None or lat is None:
         log.warning(f"Skipping record {ci_row.get('ID')} due to missing longitude/latitude.")
@@ -162,9 +162,9 @@ def sync_data_dag():
         
         oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
 
-        db_view = Variable.get("com_license_info_db_view_name")
+        db_view = Variable.get("const_emtithal_cert_db_view_name")
 
-        asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
+        asset_config = Variable.get("const_emtithal_cert_asset_config", deserialize_json=True)
 
         primary_name_col = asset_config.get("primary_name_column", "")
 
