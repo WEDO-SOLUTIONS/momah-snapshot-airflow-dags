@@ -22,9 +22,9 @@ log = logging.getLogger(__name__)
 
 
 def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dict]]:
-    db_view = Variable.get("com_license_info_db_view_name")
+    db_view = Variable.get("const_emtithal_cert_db_view_name")
 
-    asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
+    asset_config = Variable.get("const_emtithal_cert_asset_config", deserialize_json=True)
 
     primary_name_col = asset_config.get("primary_name_column", "").upper()
 
@@ -119,7 +119,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
 
         except Exception as e:
             log.error(f"Analysis failed for column '{col_name}': {str(e)}")
-            
+
             filter_obj["control_type"] = "text_box"
 
         if "control_type" in filter_obj:
