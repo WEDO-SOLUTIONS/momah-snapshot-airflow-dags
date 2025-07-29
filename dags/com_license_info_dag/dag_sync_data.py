@@ -225,7 +225,7 @@ def sync_data_dag():
 
         db_view = Variable.get("com_license_info_db_view_name")
 
-        sql = f'SELECT "id" FROM {db_view}'
+        sql = f'SELECT "ID" FROM {db_view}'
 
         records = oracle_hook.get_records(sql)
 
