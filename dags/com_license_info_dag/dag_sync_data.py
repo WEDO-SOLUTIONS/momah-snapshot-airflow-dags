@@ -168,7 +168,7 @@ def sync_data_dag():
 
         primary_name_col = asset_config.get("primary_name_column", "")
 
-        sql = f'SELECT * FROM {db_view} ORDER BY "id" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
+        sql = f'SELECT * FROM {db_view} ORDER BY "ID" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
 
         features_to_upsert = []
         
