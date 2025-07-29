@@ -33,8 +33,8 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
     ci_attribute_mapper = {k.upper(): v for k, v in ATTRIBUTE_MAPPER.items()}
 
     # Fixed date range in milliseconds (1970-01-01 to 2050-01-01)
-    MIN_DATE_MS = 0  # 1970-01-01 UTC
-    MAX_DATE_MS = 2524608000000  # 2050-01-01 UTC in milliseconds
+    MIN_DATE_MS = 3600000  # 1970-01-01 UTC
+    MAX_DATE_MS = 2524611600000  # 2050-01-01 UTC in milliseconds
 
     # Get column names
     with oracle_hook.get_conn() as conn:
