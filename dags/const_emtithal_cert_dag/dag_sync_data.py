@@ -28,7 +28,10 @@ DB_FETCH_CHUNK_SIZE = 50000
 API_PUSH_CHUNK_SIZE = 100
 
 def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> Optional[Dict[str, Any]]:
-    if not all(row.get(key) for key in ["id", "last_modified_date"]):
+    # Create case-insensitive version of the row dictionary
+    ci_row = {k.upper(): v for k, v in row.items()}
+    
+    if not all(ci_row.get(key.upper()) for key in ["id", "last_modified_date"]):
         log.warning(f"Skipping record due to missing id or last_modified_date.")
 
         return None
@@ -36,64 +39,68 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     properties = {}
 
     for db_col, map_info in ATTRIBUTE_MAPPER.items():
-        value = row.get(db_col)
+        # Use uppercase version of column name to access row data
+        value = ci_row.get(db_col.upper())
 
         is_mandatory = map_info.get("mandatory", False)
 
         if is_mandatory and value is None:
-            log.warning(f"Skipping record {row.get('id')} due to missing mandatory attribute: {db_col}")
+            log.warning(f"Skipping record {ci_row.get('ID')} due to missing mandatory attribute: {db_col}")
 
             return None
+            
         if value is None:
             properties[db_col] = None
 
             continue
+            
         if map_info["type"] == "date_time":
             try:
                 dt_obj = date_parse(value, dayfirst=True) if isinstance(value, str) else value
 
                 properties[db_col] = dt_obj.isoformat()
             except (ValueError, TypeError):
-                log.warning(f"Invalid date format for record {row.get('id')}, attribute '{db_col}'. Setting to null.")
-
+                log.warning(f"Invalid date format for record {ci_row.get('ID')}, attribute '{db_col}'. Setting to null.")
+                
                 properties[db_col] = None
         else:
             properties[db_col] = value
             
-    if primary_name_column and (primary_name_val := row.get(primary_name_column)):
+    if primary_name_column and (primary_name_val := ci_row.get(primary_name_column.upper())):
         properties[f"{primary_name_column}_ns"] = str(primary_name_val)
 
     lon = properties.get('longitude')
     lat = properties.get('latitude')
 
     if lon is None or lat is None:
-        log.warning(f"Skipping record {row.get('id')} due to missing longitude/latitude.")
+        log.warning(f"Skipping record {ci_row.get('ID')} due to missing longitude/latitude.")
 
         return None
     
     try:
         lon_float, lat_float = float(lon), float(lat)
     except (ValueError, TypeError):
-        log.warning(f"Skipping record {row.get('id')} because longitude/latitude are not valid numbers.")
+        log.warning(f"Skipping record {ci_row.get('ID')} because longitude/latitude are not valid numbers.")
 
         return None
     
     if not (-180 <= lon_float <= 180):
-        log.warning(f"Skipping record {row.get('id')} due to out-of-bounds longitude: {lon_float}")
+        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds longitude: {lon_float}")
 
         return None
     
     if not (-90 <= lat_float <= 90):
-        log.warning(f"Skipping record {row.get('id')} due to out-of-bounds latitude: {lat_float}")
+        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds latitude: {lat_float}")
 
         return None
     
     return {
 
-        "type": "Feature", "id": str(row["id"]),
+        "type": "Feature", 
+        "id": str(ci_row["ID"]),
         "geometry": {"type": "Point", "coordinates": [lon_float, lat_float]},
         "properties": properties
-
+        
     }
 
 @dag (
@@ -155,22 +162,22 @@ def sync_data_dag():
         
         oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
 
-        db_view = Variable.get("const_emtithal_cert_db_view_name")
+        db_view = Variable.get("com_license_info_db_view_name")
 
-        asset_config = Variable.get("const_emtithal_cert_asset_config", deserialize_json=True)
+        asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
 
         primary_name_col = asset_config.get("primary_name_column", "")
-        
+
         sql = f'SELECT * FROM {db_view} ORDER BY "id" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
-        
+
         features_to_upsert = []
         
         with oracle_hook.get_conn() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(sql, offset=offset, limit=limit)
 
-                # Get column names directly from the active cursor
-                column_names = [d[0].lower() for d in cursor.description]
+                # Get column names in uppercase for consistent access
+                column_names = [d[0].upper() for d in cursor.description]
 
                 log.info(f"Column names retrieved: {column_names}")
 
@@ -178,10 +185,11 @@ def sync_data_dag():
 
         if records:
             for row_tuple in records:
+                # Create dictionary with uppercase keys
                 row_dict = dict(zip(column_names, row_tuple))
 
                 feature = validate_and_convert_row(row_dict, primary_name_col)
-
+                
                 if feature:
                     features_to_upsert.append(feature)
 
