@@ -21,15 +21,17 @@ from plugins.hooks.pro_hook import ProHook
 log = logging.getLogger(__name__)
 
 
-# --- (The _build_schema_from_db helper function is unchanged) ---
 def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dict]]:
     db_view = Variable.get("const_emtithal_cert_db_view_name")
 
     asset_config = Variable.get("const_emtithal_cert_asset_config", deserialize_json=True)
 
-    primary_name_col = asset_config.get("primary_name_column", "")
+    primary_name_col = asset_config.get("primary_name_column", "").upper()  # Normalize to uppercase for comparison
 
     attributes, filters = [], []
+
+    # Create a case-insensitive version of ATTRIBUTE_MAPPER
+    ci_attribute_mapper = {k.upper(): v for k, v in ATTRIBUTE_MAPPER.items()}
 
     sql_get_cols = f'SELECT * FROM {db_view} WHERE ROWNUM = 1'
 
@@ -37,35 +39,76 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
         with conn.cursor() as cursor:
             cursor.execute(sql_get_cols)
 
-            db_columns = [desc[0].lower() for desc in cursor.description]
+            # Get column names as they appear in the database (preserving case)
+            db_columns = [desc[0] for desc in cursor.description]
 
     log.info(f"Detected columns from view: {db_columns}")
 
     for col_name in db_columns:
-        if col_name not in ATTRIBUTE_MAPPER:
-            log.warning(f"Column '{col_name}' not in ATTRIBUTE_MAPPER. Skipping.")
+        # Normalize column name to uppercase for comparison
+        normalized_col = col_name.upper()
+        
+        if normalized_col not in ci_attribute_mapper:
+            log.warning(f"Column '{col_name}' (normalized as '{normalized_col}') not in ATTRIBUTE_MAPPER. Skipping.")
 
             continue
 
-        map_info = ATTRIBUTE_MAPPER[col_name]
+        # Use the original column name in queries but the normalized name for mapping
+        map_info = ci_attribute_mapper[normalized_col]
 
-        attribute = {"id": col_name, "type": map_info["type"], "caption": map_info["en"], "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}}
+        attribute = {
+
+            "id": col_name,  # Keep original column name as ID
+            "type": map_info["type"],
+            "caption": map_info["en"],
+
+            "localizations": {
+
+                "caption": {
+
+                    "en": map_info["en"],
+                    "ar": map_info["ar"]
+
+                }
+                
+            }
+
+        }
 
         attributes.append(attribute)
 
-        if col_name == primary_name_col:
-             attributes.append({"id": f"{col_name}_ns", "type": "name", "caption": map_info["en"], "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}})
+        if normalized_col == primary_name_col:
+            attributes.append ({
 
-        filter_obj = {"attribute_id": col_name}
+                "id": f"{col_name}_ns",
+                "type": "name",
+                "caption": map_info["en"],
+
+                "localizations": {
+
+                    "caption": {
+
+                        "en": map_info["en"],
+                        "ar": map_info["ar"]
+
+                    }
+
+                }
+
+            })
+
+        filter_obj = {"attribute_id": col_name}  # Use original column name
 
         try:
             if map_info["type"] == "string":
+                # Use original column name in query but with proper quoting
                 sql_distinct = f'SELECT COUNT(DISTINCT "{col_name}") FROM {db_view}'
 
                 distinct_count = oracle_hook.get_first(sql_distinct)[0]
 
                 if 0 < distinct_count <= 50:
                     filter_obj["control_type"] = "check_box_list"
+
                     sql_values = f'SELECT DISTINCT "{col_name}" FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
                     rows = oracle_hook.get_records(sql_values)
@@ -73,34 +116,63 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                     filter_obj["items"] = [{"value": str(r[0]), "caption": str(r[0])} for r in rows]
                 else:
                     filter_obj["control_type"] = "text_box"
+                    
             elif map_info["type"] in ["number", "date_time"]:
-                sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view}'
+                # Modified date_time handling with better error checking
+                sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
+                log.info(f"Running query for {col_name}: {sql_minmax}")
+                
                 min_val, max_val = oracle_hook.get_first(sql_minmax)
+                
+                log.info(f"Raw values for {col_name}: min={min_val} (type={type(min_val)}), max={max_val} (type={type(max_val)})")
 
                 if min_val is not None and max_val is not None:
                     if map_info["type"] == "date_time":
                         filter_obj["control_type"] = "date_time_range"
 
-                        min_dt = date_parse(min_val) if isinstance(min_val, str) else min_val
-                        max_dt = date_parse(max_val) if isinstance(max_val, str) else max_val
+                        try:
+                            # Handle different date formats from Oracle
+                            if isinstance(min_val, str):
+                                min_dt = date_parse(min_val)
+                            elif hasattr(min_val, 'timestamp'):  # Already a datetime object
+                                min_dt = min_val
+                            else:
+                                raise ValueError(f"Unsupported date type: {type(min_val)}")
+                                
+                            if isinstance(max_val, str):
+                                max_dt = date_parse(max_val)
+                            elif hasattr(max_val, 'timestamp'):
+                                max_dt = max_val
+                            else:
+                                raise ValueError(f"Unsupported date type: {type(max_val)}")
+                            
+                            # Convert to milliseconds since epoch
+                            filter_obj["min"] = int(min_dt.timestamp() * 1000)
+                            filter_obj["max"] = int(max_dt.timestamp() * 1000)
 
-                        filter_obj["min"] = int(min_dt.timestamp() * 1000)
-                        filter_obj["max"] = int(max_dt.timestamp() * 1000)
+                            log.info(f"Processed date range for {col_name}: {min_dt} to {max_dt} -> {filter_obj['min']} to {filter_obj['max']} ms")
+                            
+                        except Exception as date_parse_error:
+                            log.error(f"Failed to parse date range for {col_name}: {date_parse_error}")
+
+                            filter_obj["control_type"] = "text_box"
                     else:
+                        # Original number handling remains unchanged
                         filter_obj["control_type"] = "range"
-
                         filter_obj["min"] = float(min_val)
                         filter_obj["max"] = float(max_val)
+                        
         except Exception as e:
             log.error(f"Analysis failed for column '{col_name}', defaulting to text_box. Error: {e}")
-
+            
             filter_obj["control_type"] = "text_box"
 
         if "control_type" in filter_obj:
             filters.append(filter_obj)
 
     return attributes, filters
+
 
 # --- DAG Definition ---
 @dag (
@@ -120,7 +192,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
     params = {
 
         "operation": Param("CREATE", type="string", enum=["CREATE", "UPDATE", "CLEAR_ALL_DATA"]),
-        "asset_id": Param("", type=["null", "string"], description="Optional. If blank for UPDATE/CLEAR, the DAG will use the 'com_license_info_dynamic_asset_id' Variable."),
+        "asset_id": Param("", type=["null", "string"], description="Optional. If blank for UPDATE/CLEAR, the DAG will use the 'const_emtithal_cert_dynamic_asset_id' Variable."),
         "db_conn_id": Param("oracle_db_conn_amanat_intgr", type="string"),
         "api_conn_id": Param("snapshot_pro_api_conn", type="string"),
 

@@ -50,7 +50,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
         
         if normalized_col not in ci_attribute_mapper:
             log.warning(f"Column '{col_name}' (normalized as '{normalized_col}') not in ATTRIBUTE_MAPPER. Skipping.")
-            
+
             continue
 
         # Use the original column name in queries but the normalized name for mapping
@@ -70,7 +70,7 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                     "ar": map_info["ar"]
 
                 }
-
+                
             }
 
         }
@@ -110,41 +110,69 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                     filter_obj["control_type"] = "check_box_list"
 
                     sql_values = f'SELECT DISTINCT "{col_name}" FROM {db_view} WHERE "{col_name}" IS NOT NULL'
-                    
+
                     rows = oracle_hook.get_records(sql_values)
 
                     filter_obj["items"] = [{"value": str(r[0]), "caption": str(r[0])} for r in rows]
                 else:
                     filter_obj["control_type"] = "text_box"
-
+                    
             elif map_info["type"] in ["number", "date_time"]:
-                sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view}'
+                # Modified date_time handling with better error checking
+                sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
+                log.info(f"Running query for {col_name}: {sql_minmax}")
+                
                 min_val, max_val = oracle_hook.get_first(sql_minmax)
+                
+                log.info(f"Raw values for {col_name}: min={min_val} (type={type(min_val)}), max={max_val} (type={type(max_val)})")
 
                 if min_val is not None and max_val is not None:
                     if map_info["type"] == "date_time":
                         filter_obj["control_type"] = "date_time_range"
 
-                        min_dt = date_parse(min_val) if isinstance(min_val, str) else min_val
-                        max_dt = date_parse(max_val) if isinstance(max_val, str) else max_val
+                        try:
+                            # Handle different date formats from Oracle
+                            if isinstance(min_val, str):
+                                min_dt = date_parse(min_val)
+                            elif hasattr(min_val, 'timestamp'):  # Already a datetime object
+                                min_dt = min_val
+                            else:
+                                raise ValueError(f"Unsupported date type: {type(min_val)}")
+                                
+                            if isinstance(max_val, str):
+                                max_dt = date_parse(max_val)
+                            elif hasattr(max_val, 'timestamp'):
+                                max_dt = max_val
+                            else:
+                                raise ValueError(f"Unsupported date type: {type(max_val)}")
+                            
+                            # Convert to milliseconds since epoch
+                            filter_obj["min"] = int(min_dt.timestamp() * 1000)
+                            filter_obj["max"] = int(max_dt.timestamp() * 1000)
 
-                        filter_obj["min"] = int(min_dt.timestamp() * 1000)
-                        filter_obj["max"] = int(max_dt.timestamp() * 1000)
+                            log.info(f"Processed date range for {col_name}: {min_dt} to {max_dt} -> {filter_obj['min']} to {filter_obj['max']} ms")
+                            
+                        except Exception as date_parse_error:
+                            log.error(f"Failed to parse date range for {col_name}: {date_parse_error}")
+
+                            filter_obj["control_type"] = "text_box"
                     else:
+                        # Original number handling remains unchanged
                         filter_obj["control_type"] = "range"
-
                         filter_obj["min"] = float(min_val)
                         filter_obj["max"] = float(max_val)
+                        
         except Exception as e:
             log.error(f"Analysis failed for column '{col_name}', defaulting to text_box. Error: {e}")
-            
+
             filter_obj["control_type"] = "text_box"
 
         if "control_type" in filter_obj:
             filters.append(filter_obj)
 
     return attributes, filters
+
 
 # --- DAG Definition ---
 @dag (

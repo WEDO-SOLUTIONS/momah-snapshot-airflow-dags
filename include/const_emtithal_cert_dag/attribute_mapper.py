@@ -1,31 +1,49 @@
 from typing import Dict, Any
 
 # This dictionary maps DB column names to their display properties.
-
 ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
 
     # Core location fields (fixed position)
-    "latitude": {"en": "Latitude", "ar": "خط العرض", "type": "number", "mandatory": True},
-    "longitude": {"en": "Longitude", "ar": "خط الطول", "type": "number", "mandatory": True},
-    "date": {"en": "Date", "ar": "التاريخ", "type": "date_time", "mandatory": False},
-
-    # Followed by exact CSV column order (excluding latitude/longitude)
-    "license_number": {"en": "License Number", "ar": "رقم الرخصة", "type": "string", "mandatory": False},
-    "amana_id": {"en": "Amana ID", "ar": "معرف الأمانة", "type": "string", "mandatory": False},
-    "amana_name": {"en": "Amana Name", "ar": "اسم الأمانة", "type": "string", "mandatory": False},
-    "municipality_id": {"en": "Municipality ID", "ar": "معرف البلدية", "type": "string", "mandatory": False},
-    "municipality_name": {"en": "Municipality Name", "ar": "اسم البلدية", "type": "string", "mandatory": False},
-    "license_status_id": {"en": "License Status ID", "ar": "معرف حالة الرخصة", "type": "number", "mandatory": False},
-    "license_status_name": {"en": "License Status", "ar": "حالة الرخصة", "type": "string", "mandatory": False},
-    "shop_name": {"en": "Shop Name", "ar": "اسم المحل", "type": "string", "mandatory": False},
-    "shop_area": {"en": "Shop Area", "ar": "مساحة المحل", "type": "string", "mandatory": False},
-    "isic_number": {"en": "ISIC Number", "ar": "رقم النشاط", "type": "string", "mandatory": False},
-    "isic_desc": {"en": "ISIC Description", "ar": "وصف النشاط", "type": "string", "mandatory": False},
-    "d_activities_id": {"en": "Detailed Activity ID", "ar": "معرف النشاط التفصيلي", "type": "number", "mandatory": False},
-    "d_activities_name": {"en": "Detailed Activity", "ar": "النشاط التفصيلي", "type": "string", "mandatory": False},
-    "license_issue_date": {"en": "Issue Date", "ar": "تاريخ الإصدار", "type": "string", "mandatory": False},
-    "license_sadad_end_date": {"en": "Sadad End Date", "ar": "تاريخ انتهاء السداد", "type": "string", "mandatory": False},
-    "m_activities_id": {"en": "Main Activity ID", "ar": "معرف النشاط الرئيسي", "type": "number", "mandatory": False},
-    "m_activities_name": {"en": "Main Activity", "ar": "النشاط الرئيسي", "type": "string", "mandatory": False},
+    "LATITUDE": {"en": "Latitude", "ar": "خط العرض", "type": "number", "mandatory": True},
+    "LONGITUDE": {"en": "Longitude", "ar": "خط الطول", "type": "number", "mandatory": True},
+    
+    # Request information
+    "REQUEST_ID": {"en": "Request ID", "ar": "معرف الطلب", "type": "string", "mandatory": False},
+    "CERTIFICATE_NUMBER": {"en": "Certificate Number", "ar": "رقم الشهادة", "type": "string", "mandatory": False},
+    "CERTIFICATE_ISSUE_DATE": {"en": "Certificate Issue Date", "ar": "تاريخ إصدار الشهادة", "type": "date_time", "mandatory": True},
+    "CERTIFICATE_END_DATE": {"en": "Certificate End Date", "ar": "تاريخ انتهاء الشهادة", "type": "date_time", "mandatory": True},
+    
+    # Location information
+    "AMANA_NAME": {"en": "Amana Name", "ar": "اسم الأمانة", "type": "string", "mandatory": False},
+    "MUNICIPALITY_NAME": {"en": "Municipality Name", "ar": "اسم البلدية", "type": "string", "mandatory": False},
+    "DISTRICT_NAME": {"en": "District Name", "ar": "اسم الحي", "type": "string", "mandatory": False},
+    "STREET_NAME": {"en": "Street Name", "ar": "اسم الشارع", "type": "string", "mandatory": False},
+    
+    # License information
+    "LICENSE_ID": {"en": "License ID", "ar": "معرف الرخصة", "type": "string", "mandatory": False},
+    
+    # Ownership information
+    "OWNERSHIP_DOCUMENT_NUMBER": {"en": "Ownership Document Number", "ar": "رقم وثيقة الملكية", "type": "string", "mandatory": False},
+    "OWNERSHIP_DOCUMENT_TYPE": {"en": "Ownership Document Type", "ar": "نوع وثيقة الملكية", "type": "string", "mandatory": False},
+    
+    # Submitter information
+    "SUBMITTER_ID_NUMBER": {"en": "Submitter ID Number", "ar": "رقم هوية مقدم الطلب", "type": "string", "mandatory": False},
+    "SUBMITTER_FULL_NAME": {"en": "Submitter Full Name", "ar": "اسم مقدم الطلب كاملاً", "type": "string", "mandatory": False},
+    "SUBMITTER_MOBILE": {"en": "Submitter Mobile", "ar": "جوال مقدم الطلب", "type": "string", "mandatory": False},
+    "SUBMITTER_ID_TYPE": {"en": "Submitter ID Type", "ar": "نوع هوية مقدم الطلب", "type": "string", "mandatory": False},
+    
+    # Owner information
+    "OWNER_ID": {"en": "Owner ID", "ar": "معرف المالك", "type": "string", "mandatory": False},
+    "OWNER_FULL_NAME": {"en": "Owner Full Name", "ar": "اسم المالك كاملاً", "type": "string", "mandatory": False},
+    "OWNER_MOBILE": {"en": "Owner Mobile", "ar": "جوال المالك", "type": "string", "mandatory": False},
+    "OWNER_ID_TYPE": {"en": "Owner ID Type", "ar": "نوع هوية المالك", "type": "string", "mandatory": False},
+    
+    # Request details
+    "REQUEST_SOURCE": {"en": "Request Source", "ar": "مصدر الطلب", "type": "string", "mandatory": False},
+    "SUBMISSION_TYPE": {"en": "Submission Type", "ar": "نوع التقديم", "type": "string", "mandatory": False},
+    "REQUEST_STATUS": {"en": "Request Status", "ar": "حالة الطلب", "type": "string", "mandatory": False},
+    "ENTRY_MODES": {"en": "Entry Modes", "ar": "طرق الدخول", "type": "string", "mandatory": False},
+    "NOTES": {"en": "Notes", "ar": "ملاحظات", "type": "string", "mandatory": False},
+    "INTERSECTS_WITH_TARGET_ROADS": {"en": "Intersects With Target Roads", "ar": "يتقاطع مع الطرق المستهدفة", "type": "string", "mandatory": False}
 
 }

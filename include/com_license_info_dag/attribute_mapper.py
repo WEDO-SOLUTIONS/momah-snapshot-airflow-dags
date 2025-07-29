@@ -7,10 +7,10 @@ ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
     # Core location fields (fixed position)
     "LATITUDE": {"en": "Latitude", "ar": "خط العرض", "type": "number", "mandatory": True},
     "LONGITUDE": {"en": "Longitude", "ar": "خط الطول", "type": "number", "mandatory": True},
-    "LICENSE_ISSUE_DATE": {"en": "Issue Date", "ar": "تاريخ الإصدار", "type": "date_time", "mandatory": True},
 
     # Followed by exact CSV column order (excluding latitude/longitude)
     "LICENSE_NUMBER": {"en": "License Number", "ar": "رقم الرخصة", "type": "string", "mandatory": False},
+    "LICENSE_ISSUE_DATE": {"en": "Issue Date", "ar": "تاريخ الإصدار", "type": "date_time", "mandatory": True},
     "AMANA_ID": {"en": "Amana ID", "ar": "معرف الأمانة", "type": "string", "mandatory": False},
     "AMANA_NAME": {"en": "Amana Name", "ar": "اسم الأمانة", "type": "string", "mandatory": False},
     "MUNICIPALITY_ID": {"en": "Municipality ID", "ar": "معرف البلدية", "type": "string", "mandatory": False},
