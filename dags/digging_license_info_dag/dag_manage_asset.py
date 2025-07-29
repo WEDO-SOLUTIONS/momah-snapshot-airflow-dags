@@ -21,49 +21,70 @@ from plugins.hooks.pro_hook import ProHook
 log = logging.getLogger(__name__)
 
 
-# --- (The _build_schema_from_db helper function is unchanged) ---
 def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dict]]:
     db_view = Variable.get("digging_license_info_db_view_name")
 
     asset_config = Variable.get("digging_license_info_asset_config", deserialize_json=True)
 
-    primary_name_col = asset_config.get("primary_name_column", "")
+    primary_name_col = asset_config.get("primary_name_column", "").upper()
 
     attributes, filters = [], []
 
-    sql_get_cols = f'SELECT * FROM {db_view} WHERE ROWNUM = 1'
+    ci_attribute_mapper = {k.upper(): v for k, v in ATTRIBUTE_MAPPER.items()}
 
+    # Fixed date range in milliseconds (1980-01-01 to 2050-01-01)
+    MIN_DATE_MS = 315522000000  # 1980-01-01 UTC
+    MAX_DATE_MS = 2524597200000  # 2050-01-01 UTC in milliseconds
+
+    # Get column names
     with oracle_hook.get_conn() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(sql_get_cols)
+            cursor.execute(f'SELECT * FROM {db_view} WHERE ROWNUM = 1')
 
-            db_columns = [desc[0].lower() for desc in cursor.description]
+            db_columns = [desc[0] for desc in cursor.description]
 
     log.info(f"Detected columns from view: {db_columns}")
 
     for col_name in db_columns:
-        if col_name not in ATTRIBUTE_MAPPER:
+        normalized_col = col_name.upper()
+        
+        if normalized_col not in ci_attribute_mapper:
             log.warning(f"Column '{col_name}' not in ATTRIBUTE_MAPPER. Skipping.")
 
             continue
 
-        map_info = ATTRIBUTE_MAPPER[col_name]
+        map_info = ci_attribute_mapper[normalized_col]
 
-        attribute = {"id": col_name, "type": map_info["type"], "caption": map_info["en"], "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}}
+        attribute = {
+
+            "id": col_name,
+            "type": map_info["type"],
+            "caption": map_info["en"],
+            "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}
+
+        }
 
         attributes.append(attribute)
 
-        if col_name == primary_name_col:
-             attributes.append({"id": f"{col_name}_ns", "type": "name", "caption": map_info["en"], "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}})
+        if normalized_col == primary_name_col:
+            attributes.append ({
+
+                "id": f"{col_name}_ns",
+                "type": "name",
+                "caption": map_info["en"],
+                "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}
+
+            })
 
         filter_obj = {"attribute_id": col_name}
 
         try:
             if map_info["type"] == "string":
+                # Original string handling
                 sql_distinct = f'SELECT COUNT(DISTINCT "{col_name}") FROM {db_view}'
 
                 distinct_count = oracle_hook.get_first(sql_distinct)[0]
-
+                
                 if 0 < distinct_count <= 50:
                     filter_obj["control_type"] = "check_box_list"
 
@@ -74,34 +95,38 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                     filter_obj["items"] = [{"value": str(r[0]), "caption": str(r[0])} for r in rows]
                 else:
                     filter_obj["control_type"] = "text_box"
-            elif map_info["type"] in ["number", "date_time"]:
+
+            elif map_info["type"] == "date_time":
+                # Simplified date handling with fixed range
+                filter_obj["control_type"] = "date_time_range"
+
+                filter_obj["min"] = MIN_DATE_MS
+                filter_obj["max"] = MAX_DATE_MS
+
+                log.info(f"Set fixed date range for {col_name}: {MIN_DATE_MS} to {MAX_DATE_MS}")
+
+            elif map_info["type"] == "number":
+                # Original number handling
                 sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view}'
 
                 min_val, max_val = oracle_hook.get_first(sql_minmax)
-
+                
                 if min_val is not None and max_val is not None:
-                    if map_info["type"] == "date_time":
-                        filter_obj["control_type"] = "date_time_range"
+                    filter_obj["control_type"] = "range"
 
-                        min_dt = date_parse(min_val) if isinstance(min_val, str) else min_val
-                        max_dt = date_parse(max_val) if isinstance(max_val, str) else max_val
+                    filter_obj["min"] = float(min_val)
+                    filter_obj["max"] = float(max_val)
 
-                        filter_obj["min"] = int(min_dt.timestamp() * 1000)
-                        filter_obj["max"] = int(max_dt.timestamp() * 1000)
-                    else:
-                        filter_obj["control_type"] = "range"
-
-                        filter_obj["min"] = float(min_val)
-                        filter_obj["max"] = float(max_val)
         except Exception as e:
-            log.error(f"Analysis failed for column '{col_name}', defaulting to text_box. Error: {e}")
-
+            log.error(f"Analysis failed for column '{col_name}': {str(e)}")
+            
             filter_obj["control_type"] = "text_box"
 
         if "control_type" in filter_obj:
             filters.append(filter_obj)
 
     return attributes, filters
+
 
 # --- DAG Definition ---
 @dag (
