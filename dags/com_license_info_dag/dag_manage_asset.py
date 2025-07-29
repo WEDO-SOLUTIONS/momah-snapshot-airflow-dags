@@ -26,52 +26,41 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
 
     asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
 
-    primary_name_col = asset_config.get("primary_name_column", "").upper()  # Normalize to uppercase for comparison
+    primary_name_col = asset_config.get("primary_name_column", "").upper()
 
     attributes, filters = [], []
 
-    # Create a case-insensitive version of ATTRIBUTE_MAPPER
     ci_attribute_mapper = {k.upper(): v for k, v in ATTRIBUTE_MAPPER.items()}
 
-    sql_get_cols = f'SELECT * FROM {db_view} WHERE ROWNUM = 1'
+    # Fixed date range in milliseconds (1970-01-01 to 2050-01-01)
+    MIN_DATE_MS = 0  # 1970-01-01 UTC
+    MAX_DATE_MS = 2524608000000  # 2050-01-01 UTC in milliseconds
 
+    # Get column names
     with oracle_hook.get_conn() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(sql_get_cols)
+            cursor.execute(f'SELECT * FROM {db_view} WHERE ROWNUM = 1')
 
-            # Get column names as they appear in the database (preserving case)
             db_columns = [desc[0] for desc in cursor.description]
 
     log.info(f"Detected columns from view: {db_columns}")
 
     for col_name in db_columns:
-        # Normalize column name to uppercase for comparison
         normalized_col = col_name.upper()
         
         if normalized_col not in ci_attribute_mapper:
-            log.warning(f"Column '{col_name}' (normalized as '{normalized_col}') not in ATTRIBUTE_MAPPER. Skipping.")
+            log.warning(f"Column '{col_name}' not in ATTRIBUTE_MAPPER. Skipping.")
 
             continue
 
-        # Use the original column name in queries but the normalized name for mapping
         map_info = ci_attribute_mapper[normalized_col]
 
         attribute = {
 
-            "id": col_name,  # Keep original column name as ID
+            "id": col_name,
             "type": map_info["type"],
             "caption": map_info["en"],
-
-            "localizations": {
-
-                "caption": {
-
-                    "en": map_info["en"],
-                    "ar": map_info["ar"]
-
-                }
-                
-            }
+            "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}
 
         }
 
@@ -83,29 +72,19 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                 "id": f"{col_name}_ns",
                 "type": "name",
                 "caption": map_info["en"],
-
-                "localizations": {
-
-                    "caption": {
-
-                        "en": map_info["en"],
-                        "ar": map_info["ar"]
-
-                    }
-
-                }
+                "localizations": {"caption": {"en": map_info["en"], "ar": map_info["ar"]}}
 
             })
 
-        filter_obj = {"attribute_id": col_name}  # Use original column name
+        filter_obj = {"attribute_id": col_name}
 
         try:
             if map_info["type"] == "string":
-                # Use original column name in query but with proper quoting
+                # Original string handling
                 sql_distinct = f'SELECT COUNT(DISTINCT "{col_name}") FROM {db_view}'
 
                 distinct_count = oracle_hook.get_first(sql_distinct)[0]
-
+                
                 if 0 < distinct_count <= 50:
                     filter_obj["control_type"] = "check_box_list"
 
@@ -116,56 +95,31 @@ def _build_schema_from_db(oracle_hook: OracleHook) -> Tuple[List[Dict], List[Dic
                     filter_obj["items"] = [{"value": str(r[0]), "caption": str(r[0])} for r in rows]
                 else:
                     filter_obj["control_type"] = "text_box"
-                    
-            elif map_info["type"] in ["number", "date_time"]:
-                # Modified date_time handling with better error checking
-                sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view} WHERE "{col_name}" IS NOT NULL'
 
-                log.info(f"Running query for {col_name}: {sql_minmax}")
-                
+            elif map_info["type"] == "date_time":
+                # Simplified date handling with fixed range
+                filter_obj["control_type"] = "date_time_range"
+
+                filter_obj["min"] = MIN_DATE_MS
+                filter_obj["max"] = MAX_DATE_MS
+
+                log.info(f"Set fixed date range for {col_name}: {MIN_DATE_MS} to {MAX_DATE_MS}")
+
+            elif map_info["type"] == "number":
+                # Original number handling
+                sql_minmax = f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM {db_view}'
+
                 min_val, max_val = oracle_hook.get_first(sql_minmax)
                 
-                log.info(f"Raw values for {col_name}: min={min_val} (type={type(min_val)}), max={max_val} (type={type(max_val)})")
-
                 if min_val is not None and max_val is not None:
-                    if map_info["type"] == "date_time":
-                        filter_obj["control_type"] = "date_time_range"
+                    filter_obj["control_type"] = "range"
 
-                        try:
-                            # Handle different date formats from Oracle
-                            if isinstance(min_val, str):
-                                min_dt = date_parse(min_val)
-                            elif hasattr(min_val, 'timestamp'):  # Already a datetime object
-                                min_dt = min_val
-                            else:
-                                raise ValueError(f"Unsupported date type: {type(min_val)}")
-                                
-                            if isinstance(max_val, str):
-                                max_dt = date_parse(max_val)
-                            elif hasattr(max_val, 'timestamp'):
-                                max_dt = max_val
-                            else:
-                                raise ValueError(f"Unsupported date type: {type(max_val)}")
-                            
-                            # Convert to milliseconds since epoch
-                            filter_obj["min"] = int(min_dt.timestamp() * 1000)
-                            filter_obj["max"] = int(max_dt.timestamp() * 1000)
+                    filter_obj["min"] = float(min_val)
+                    filter_obj["max"] = float(max_val)
 
-                            log.info(f"Processed date range for {col_name}: {min_dt} to {max_dt} -> {filter_obj['min']} to {filter_obj['max']} ms")
-                            
-                        except Exception as date_parse_error:
-                            log.error(f"Failed to parse date range for {col_name}: {date_parse_error}")
-
-                            filter_obj["control_type"] = "text_box"
-                    else:
-                        # Original number handling remains unchanged
-                        filter_obj["control_type"] = "range"
-                        filter_obj["min"] = float(min_val)
-                        filter_obj["max"] = float(max_val)
-                        
         except Exception as e:
-            log.error(f"Analysis failed for column '{col_name}', defaulting to text_box. Error: {e}")
-
+            log.error(f"Analysis failed for column '{col_name}': {str(e)}")
+            
             filter_obj["control_type"] = "text_box"
 
         if "control_type" in filter_obj:
