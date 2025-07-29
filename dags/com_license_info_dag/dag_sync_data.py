@@ -31,8 +31,8 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     # Create case-insensitive version of the row dictionary
     ci_row = {k.upper(): v for k, v in row.items()}
     
-    if not all(ci_row.get(key.upper()) for key in ["id", "last_modified_date"]):
-        log.warning(f"Skipping record due to missing id or last_modified_date.")
+    if not all(ci_row.get(key.upper()) for key in ["ID", "LAST_MODIFIED_DATE"]):
+        log.warning(f"Skipping record due to missing ID or LAST_MODIFIED_DATE.")
 
         return None
     
@@ -56,11 +56,18 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
             
         if map_info["type"] == "date_time":
             try:
-                dt_obj = date_parse(value, dayfirst=True) if isinstance(value, str) else value
-
-                properties[db_col] = dt_obj.isoformat()
-            except (ValueError, TypeError):
-                log.warning(f"Invalid date format for record {ci_row.get('ID')}, attribute '{db_col}'. Setting to null.")
+                # Handle both string and datetime objects
+                if isinstance(value, str):
+                    dt_obj = date_parse(value, dayfirst=True)
+                elif hasattr(value, 'isoformat'):  # Already a datetime object
+                    dt_obj = value
+                else:
+                    raise ValueError(f"Unsupported date type: {type(value)}")
+                
+                # Ensure we always store as ISO format string
+                properties[db_col] = dt_obj.isoformat() if dt_obj else None
+            except (ValueError, TypeError) as e:
+                log.warning(f"Invalid date format for record {ci_row.get('ID')}, attribute '{db_col}': {str(e)}. Setting to null.")
                 
                 properties[db_col] = None
         else:
@@ -73,24 +80,24 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
     lat = properties.get('LATITUDE')
 
     if lon is None or lat is None:
-        log.warning(f"Skipping record {ci_row.get('ID')} due to missing longitude/latitude.")
+        log.warning(f"Skipping record {ci_row.get('ID')} due to missing LONGITUDE/LATITUDE.")
 
         return None
     
     try:
         lon_float, lat_float = float(lon), float(lat)
     except (ValueError, TypeError):
-        log.warning(f"Skipping record {ci_row.get('ID')} because longitude/latitude are not valid numbers.")
+        log.warning(f"Skipping record {ci_row.get('ID')} because LONGITUDE/LATITUDE are not valid numbers.")
 
         return None
     
     if not (-180 <= lon_float <= 180):
-        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds longitude: {lon_float}")
+        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds LONGITUDE: {lon_float}")
 
         return None
     
     if not (-90 <= lat_float <= 90):
-        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds latitude: {lat_float}")
+        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds LATITUDE: {lat_float}")
 
         return None
     
@@ -100,8 +107,9 @@ def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> O
         "id": str(ci_row["ID"]),
         "geometry": {"type": "Point", "coordinates": [lon_float, lat_float]},
         "properties": properties
-        
+
     }
+
 
 @dag (
 
