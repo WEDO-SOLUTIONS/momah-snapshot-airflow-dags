@@ -45,6 +45,11 @@ def bootstrap_variables() -> None:
 
 
 def build_schema_from_db() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Connects to Oracle, inspects the view's columns, and builds two lists:
+      1) attributes
+      2) filters
+    """
     oracle = OracleHook(oracle_conn_id=DB_CONN_ID)
     db_view = Variable.get(VIEW_VAR)
     asset_cfg = Variable.get(CONFIG_VAR, deserialize_json=True)
@@ -53,7 +58,6 @@ def build_schema_from_db() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     MIN_DATE_MS = 315522000000
     MAX_DATE_MS = 2524597200000
 
-    # Retrieve actual column names
     with oracle.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(f"SELECT * FROM {db_view} WHERE ROWNUM = 1")
@@ -100,7 +104,9 @@ def build_schema_from_db() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
                     rows = oracle.get_records(
                         f'SELECT DISTINCT "{raw_col}" FROM {db_view} WHERE "{raw_col}" IS NOT NULL'
                     )
-                    fobj["items"] = [{"value": r[0], "caption": r[0]} for r in rows]
+                    fobj["items"] = [
+                        {"value": str(r[0]), "caption": str(r[0])} for r in rows
+                    ]
                 else:
                     fobj["control_type"] = "text_box"
 
@@ -124,10 +130,11 @@ def build_schema_from_db() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
 
 def build_payload(
-    asset_cfg: Dict[str, Any],
-    attributes: List[Dict[str, Any]],
-    filters: List[Dict[str, Any]]
+    asset_cfg: Dict[str, Any], attributes: List[Dict[str, Any]], filters: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
+    """
+    Assemble the JSON payload for creating/updating the Urbi Pro asset.
+    """
     return {
         "name": asset_cfg["name"],
         "description": asset_cfg["description"],
@@ -148,6 +155,9 @@ def build_payload(
 def validate_and_convert_row(
     row: Dict[str, Any], primary_name_column: str
 ) -> Optional[Dict[str, Any]]:
+    """
+    Validate required fields and convert a DB row into a GeoJSON feature.
+    """
     ci = {k.lower(): v for k, v in row.items()}
     if not ci.get("id") or not ci.get("last_modified_date"):
         log.warning(f"Skipping record missing id/last_modified_date: {ci.get('id')}")
@@ -165,7 +175,8 @@ def validate_and_convert_row(
         else:
             if mi["type"] == "date_time":
                 try:
-                    dt = date_parse(val) if isinstance(val, str) else val
+                    # parse with dayfirst=True
+                    dt = date_parse(val, dayfirst=True) if isinstance(val, str) else val
                     properties[db_col] = dt.isoformat()
                 except Exception:
                     log.warning(f"Invalid date in {db_col} for record {ci.get('id')}")
@@ -175,17 +186,18 @@ def validate_and_convert_row(
 
     # Convert any remaining non-serializable types in properties
     for k, v in properties.items():
-        if isinstance(v, datetime.datetime) or isinstance(v, datetime.date):
+        if isinstance(v, (datetime.datetime, datetime.date)):
             properties[k] = v.isoformat()
         elif isinstance(v, decimal.Decimal):
             properties[k] = float(v)
 
+    # Primary name suffix
     if primary_name_column:
         pn = primary_name_column.lower()
         if ci.get(pn):
             properties[f"{pn}_ns"] = str(ci[pn])
 
-    # Build geometry
+    # Geometry
     asset_cfg = Variable.get(CONFIG_VAR, deserialize_json=True)
     geom_dim = asset_cfg.get("geometry_dimension", "point").lower()
     try:
