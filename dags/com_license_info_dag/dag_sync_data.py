@@ -1,280 +1,161 @@
+# dags/com_license_info_dag/dag_sync_data.py
+
 import sys
 import os
-from pendulum import datetime
-from typing import Any, Dict, List, Optional
 import logging
-import math
+from pendulum import datetime
+from datetime import timedelta
+from typing import List, Dict, Any, Optional
 
-# Add the project's root directory to the Python path
+# Ensure include/ is on PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from airflow.decorators import dag, task
 from airflow.models.variable import Variable
-from airflow.providers.oracle.hooks.oracle import OracleHook
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-from dateutil.parser import parse as date_parse
+from airflow.providers.oracle.hooks.oracle import OracleHook
 
-from include.com_license_info_dag.attribute_mapper import ATTRIBUTE_MAPPER
+from include.com_license_info_dag.constants import (
+    VIEW_VAR,
+    CONFIG_VAR,
+    ASSET_ID_VAR,
+    TOKEN_VAR,
+    KNOWN_IDS_VAR,
+    DB_CONN_ID,
+    API_CONN_ID,
+    DB_FETCH_SIZE,
+    API_PUSH_SIZE,
+)
+from include.com_license_info_dag.helpers import validate_and_convert_row
 from plugins.hooks.pro_hook import ProHook
-
 
 log = logging.getLogger(__name__)
 
+# Default args for retries, timeouts, etc.
+default_args = {
+    'owner': 'airflow',
+    'depends_on_past': False,
+    'retries': 2,
+    'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(hours=1),
+}
 
-DB_CONN_ID = "oracle_db_conn_amanat_intgr"
-API_CONN_ID = "snapshot_pro_api_conn"
-
-DB_FETCH_CHUNK_SIZE = 50000
-API_PUSH_CHUNK_SIZE = 100
-
-def validate_and_convert_row(row: Dict[str, Any], primary_name_column: str) -> Optional[Dict[str, Any]]:
-    # Create case-insensitive version of the row dictionary
-    ci_row = {k.upper(): v for k, v in row.items()}
-    
-    if not all(ci_row.get(key.upper()) for key in ["ID", "LAST_MODIFIED_DATE"]):
-        log.warning(f"Skipping record due to missing ID or LAST_MODIFIED_DATE.")
-
-        return None
-    
-    properties = {}
-
-    for db_col, map_info in ATTRIBUTE_MAPPER.items():
-        # Use uppercase version of column name to access row data
-        value = ci_row.get(db_col.upper())
-
-        is_mandatory = map_info.get("mandatory", False)
-
-        if is_mandatory and value is None:
-            log.warning(f"Skipping record {ci_row.get('ID')} due to missing mandatory attribute: {db_col}")
-
-            return None
-            
-        if value is None:
-            properties[db_col] = None
-
-            continue
-            
-        if map_info["type"] == "date_time":
-            try:
-                # Handle both string and datetime objects
-                if isinstance(value, str):
-                    dt_obj = date_parse(value, dayfirst=True)
-                elif hasattr(value, 'isoformat'):  # Already a datetime object
-                    dt_obj = value
-                else:
-                    raise ValueError(f"Unsupported date type: {type(value)}")
-                
-                # Ensure we always store as ISO format string
-                properties[db_col] = dt_obj.isoformat() if dt_obj else None
-            except (ValueError, TypeError) as e:
-                log.warning(f"Invalid date format for record {ci_row.get('ID')}, attribute '{db_col}': {str(e)}. Setting to null.")
-                
-                properties[db_col] = None
-        else:
-            properties[db_col] = value
-            
-    if primary_name_column and (primary_name_val := ci_row.get(primary_name_column.upper())):
-        properties[f"{primary_name_column}_ns"] = str(primary_name_val)
-
-    lon = properties.get('LONGITUDE')
-    lat = properties.get('LATITUDE')
-
-    if lon is None or lat is None:
-        log.warning(f"Skipping record {ci_row.get('ID')} due to missing LONGITUDE/LATITUDE.")
-
-        return None
-    
-    try:
-        lon_float, lat_float = float(lon), float(lat)
-    except (ValueError, TypeError):
-        log.warning(f"Skipping record {ci_row.get('ID')} because LONGITUDE/LATITUDE are not valid numbers.")
-
-        return None
-    
-    if not (-180 <= lon_float <= 180):
-        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds LONGITUDE: {lon_float}")
-
-        return None
-    
-    if not (-90 <= lat_float <= 90):
-        log.warning(f"Skipping record {ci_row.get('ID')} due to out-of-bounds LATITUDE: {lat_float}")
-
-        return None
-    
-    return {
-
-        "type": "Feature", 
-        "id": str(ci_row["ID"]),
-        "geometry": {"type": "Point", "coordinates": [lon_float, lat_float]},
-        "properties": properties
-
-    }
-
-
-@dag (
-
-    dag_id = "com_license_info_sync_data",
-    start_date = datetime(2025, 1, 1),
-    #schedule = "0 */6 * * *",
+@dag(
+    dag_id="com_license_info_sync_data",
+    default_args=default_args,
+    start_date=datetime(2025, 1, 1),
     schedule_interval="0 */6 * * *",
-    catchup = False,
-    max_active_runs = 1,
-    tags = ["urbi_pro", "com_license_info", "data_sync"],
-    doc_md = """
-    ### Com License Info Full Data Sync
-    Performs a full data sync from the Oracle view to the Urbi Pro dynamic asset.
-    - **Step 1**: Triggers the `com_license_info_manage_asset` DAG to update the asset schema.
-    - **Step 2**: If the schema update succeeds, it proceeds to sync all data.
-    """
-
+    catchup=False,
+    max_active_runs=1,
+    tags=["urbi_pro", "com_license_info", "data_sync"],
+    doc_md="""
+    ### Com License Info Data Sync
+    - **Step 1**: Update asset schema via the manage_asset DAG.
+    - **Step 2**: Delete removed records.
+    - **Step 3**: Upsert new/updated records using keyset pagination.
+    - **Step 4**: Persist the new set of known IDs.
+    """,
 )
 def sync_data_dag():
-    update_asset_schema = TriggerDagRunOperator (
-
-        task_id = "update_asset_schema",
-        trigger_dag_id = "com_license_info_manage_asset",
-        wait_for_completion = True,
-        conf = {"operation": "UPDATE"},
-        deferrable = True,
-        failed_states = ["failed"],
-
+    # 1️⃣ Trigger schema update
+    update_schema = TriggerDagRunOperator(
+        task_id="update_asset_schema",
+        trigger_dag_id="com_license_info_manage_asset",
+        conf={"operation": "UPDATE"},
+        wait_for_completion=True,
+        deferrable=True,
+        failed_states=["failed"],
     )
 
     @task
-    def get_record_count_and_generate_chunks() -> List[Dict]:
-        oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
+    def process_deletes() -> List[str]:
+        # Fetch last-known IDs
+        last_known = set(Variable.get(
+            KNOWN_IDS_VAR,
+            default_var=[],
+            deserialize_json=True
+        ))
 
-        db_view = Variable.get("com_license_info_db_view_name")
+        # Fetch current IDs from DB
+        oracle = OracleHook(oracle_conn_id=DB_CONN_ID)
+        view = Variable.get(VIEW_VAR)
+        with oracle.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT id FROM {view}")
+                records = cur.fetchall()
+        current = {str(r[0]) for r in records}
 
-        sql = f'SELECT COUNT(*) FROM {db_view}'
+        # Identify deletes
+        to_delete = list(last_known - current)
+        if to_delete:
+            log.info(f"Deleting {len(to_delete)} removed records...")
+            hook = ProHook(http_conn_id=API_CONN_ID)
+            asset_id = Variable.get(ASSET_ID_VAR)
+            token    = Variable.get(TOKEN_VAR)
+            for i in range(0, len(to_delete), API_PUSH_SIZE):
+                batch = to_delete[i : i + API_PUSH_SIZE]
+                hook.push_data(asset_id, token, batch, is_delete=True)
 
-        total_records = oracle_hook.get_first(sql)[0] or 0
-
-        log.info(f"Found {total_records} total records in the source view.")
-
-        num_chunks = math.ceil(total_records / DB_FETCH_CHUNK_SIZE)
-
-        chunks = [{"limit": DB_FETCH_CHUNK_SIZE, "offset": i * DB_FETCH_CHUNK_SIZE} for i in range(num_chunks)]
-
-        log.info(f"Generated {len(chunks)} chunks to process in parallel.")
-
-        return chunks
-
-    @task
-    def process_and_push_chunk(chunk_info: Dict):
-        limit = chunk_info["limit"]
-
-        offset = chunk_info["offset"]
-
-        log.info(f"Processing DB chunk: offset={offset}, limit={limit}")
-        
-        oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
-
-        db_view = Variable.get("com_license_info_db_view_name")
-
-        asset_config = Variable.get("com_license_info_asset_config", deserialize_json=True)
-
-        primary_name_col = asset_config.get("primary_name_column", "")
-
-        sql = f'SELECT * FROM {db_view} ORDER BY "ID" OFFSET :offset ROWS FETCH NEXT :limit ROWS ONLY'
-
-        features_to_upsert = []
-        
-        with oracle_hook.get_conn() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, offset=offset, limit=limit)
-
-                # Get column names in uppercase for consistent access
-                column_names = [d[0].upper() for d in cursor.description]
-
-                log.info(f"Column names retrieved: {column_names}")
-
-                records = cursor.fetchall()
-
-        if records:
-            for row_tuple in records:
-                # Create dictionary with uppercase keys
-                row_dict = dict(zip(column_names, row_tuple))
-
-                feature = validate_and_convert_row(row_dict, primary_name_col)
-                
-                if feature:
-                    features_to_upsert.append(feature)
-
-        if not features_to_upsert:
-            log.info("No valid features found in this DB chunk. Skipping.")
-
-            return
-
-        log.info(f"DB chunk processing complete. Found {len(features_to_upsert)} valid records to push.")
-
-        api_hook = ProHook(http_conn_id=API_CONN_ID)
-
-        asset_id = Variable.get("com_license_info_dynamic_asset_id")
-
-        token = Variable.get("com_license_info_push_data_access_token")
-
-        for i in range(0, len(features_to_upsert), API_PUSH_CHUNK_SIZE):
-            batch = features_to_upsert[i:i + API_PUSH_CHUNK_SIZE]
-
-            log.info(f"Pushing an API batch of {len(batch)} records...")
-
-            api_hook.push_data(asset_id, token, batch, is_delete=False)
-        
-        log.info(f"All API batches for this DB chunk have been pushed successfully.")
+        return list(current)
 
     @task
-    def process_and_push_deletes() -> List[str]:
-        last_known_ids = Variable.get("com_license_info_known_ids", default_var=[], deserialize_json=True)
+    def sync_upserts() -> None:
+        oracle = OracleHook(oracle_conn_id=DB_CONN_ID)
+        view = Variable.get(VIEW_VAR)
+        asset_id = Variable.get(ASSET_ID_VAR)
+        token    = Variable.get(TOKEN_VAR)
+        asset_cfg = Variable.get(CONFIG_VAR, deserialize_json=True)
+        primary   = asset_cfg.get("primary_name_column", "").lower()
+        hook = ProHook(http_conn_id=API_CONN_ID)
 
-        last_known_ids_set = set(last_known_ids)
-        
-        oracle_hook = OracleHook(oracle_conn_id=DB_CONN_ID)
+        last_id: Optional[Any] = None
+        while True:
+            if last_id is None:
+                sql = f"SELECT * FROM {view} ORDER BY id FETCH NEXT :limit ROWS ONLY"
+                params = {"limit": DB_FETCH_SIZE}
+            else:
+                sql = (
+                    f"SELECT * FROM {view} WHERE id > :last_id "
+                    f"ORDER BY id FETCH NEXT :limit ROWS ONLY"
+                )
+                params = {"last_id": last_id, "limit": DB_FETCH_SIZE}
 
-        db_view = Variable.get("com_license_info_db_view_name")
+            with oracle.get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, **params)
+                    cols = [d[0].lower() for d in cur.description]
+                    recs = cur.fetchall()
 
-        sql = f'SELECT "ID" FROM {db_view}'
+            if not recs:
+                log.info("No more rows to process; upserts complete.")
+                break
 
-        records = oracle_hook.get_records(sql)
+            features: List[Dict[str, Any]] = []
+            for row in recs:
+                row_dict = dict(zip(cols, row))
+                feat = validate_and_convert_row(row_dict, primary)
+                if feat:
+                    features.append(feat)
 
-        current_ids_set = {str(item[0]) for item in records} if records else set()
+            if features:
+                log.info(f"Upserting batch of {len(features)} features...")
+                for i in range(0, len(features), API_PUSH_SIZE):
+                    batch = features[i : i + API_PUSH_SIZE]
+                    hook.push_data(asset_id, token, batch, is_delete=False)
 
-        ids_to_delete = list(last_known_ids_set - current_ids_set)
-        
-        if ids_to_delete:
-            log.info(f"Found {len(ids_to_delete)} records to delete. Pushing to API in batches...")
-
-            api_hook = ProHook(http_conn_id=API_CONN_ID)
-
-            asset_id = Variable.get("com_license_info_dynamic_asset_id")
-
-            token = Variable.get("com_license_info_push_data_access_token")
-
-            for i in range(0, len(ids_to_delete), API_PUSH_CHUNK_SIZE):
-                batch = ids_to_delete[i:i + API_PUSH_CHUNK_SIZE]
-
-                log.info(f"Pushing an API batch of {len(batch)} deletions...")
-
-                api_hook.push_data(asset_id, token, batch, is_delete=True)
-        else:
-            log.info("No records to delete.")
-        
-        return list(current_ids_set)
+            # Advance keyset
+            last_id = recs[-1][cols.index("id")]
 
     @task
-    def update_final_state(all_current_ids: List[str]):
-        Variable.set("com_license_info_known_ids", all_current_ids, serialize_json=True)
+    def update_known_ids(current_ids: List[str]) -> None:
+        Variable.set(KNOWN_IDS_VAR, current_ids, serialize_json=True)
+        log.info(f"Updated known IDs variable with {len(current_ids)} entries.")
 
-        log.info(f"Successfully updated final state with {len(all_current_ids)} ids.")
+    # Orchestrate tasks
+    deleted_ids = process_deletes()
+    upserts    = sync_upserts()
+    updated    = update_known_ids(deleted_ids)
 
-    chunks_to_process = get_record_count_and_generate_chunks()
+    update_schema >> deleted_ids >> upserts >> updated
 
-    current_ids_list = process_and_push_deletes()
-
-    update_asset_schema >> [chunks_to_process, current_ids_list]
-
-    process_and_push_chunk.expand(chunk_info=chunks_to_process)
-    
-    update_final_state(current_ids_list)
-
-sync_data_dag()
+sync_data = sync_data_dag()
