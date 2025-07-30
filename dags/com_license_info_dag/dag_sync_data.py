@@ -37,14 +37,14 @@ default_args = {
     'depends_on_past': False,
     'retries': 2,
     'retry_delay': timedelta(minutes=5),
-    'execution_timeout': timedelta(hours=1),
+    'execution_timeout': timedelta(hours=3),
 }
 
 @dag(
     dag_id="com_license_info_sync_data",
     default_args=default_args,
     start_date=datetime(2025, 1, 1),
-    schedule_interval="0 */6 * * *",
+    schedule_interval="@daily",
     catchup=False,
     max_active_runs=1,
     tags=["urbi_pro", "com_license_info", "data_sync"],
