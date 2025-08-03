@@ -81,7 +81,7 @@ def sync_data_dag():
         view = Variable.get(VIEW_VAR)
         with oracle.get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT id FROM {view}")
+                cur.execute(f'SELECT "id" FROM {view}')
                 records = cur.fetchall()
         current = {str(r[0]) for r in records}
 
@@ -111,12 +111,12 @@ def sync_data_dag():
         last_id: Optional[Any] = None
         while True:
             if last_id is None:
-                sql = f"SELECT * FROM {view} ORDER BY id FETCH NEXT :limit ROWS ONLY"
+                sql = f'SELECT * FROM {view} ORDER BY "id" FETCH NEXT :limit ROWS ONLY'
                 params = {"limit": DB_FETCH_SIZE}
             else:
                 sql = (
-                    f"SELECT * FROM {view} WHERE id > :last_id "
-                    f"ORDER BY id FETCH NEXT :limit ROWS ONLY"
+                    f'SELECT * FROM {view} WHERE "id" > :last_id '
+                    f'ORDER BY "id" FETCH NEXT :limit ROWS ONLY'
                 )
                 params = {"last_id": last_id, "limit": DB_FETCH_SIZE}
 
