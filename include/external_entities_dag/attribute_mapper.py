@@ -17,8 +17,8 @@ ATTRIBUTE_MAPPER: Dict[str, Dict[str, Any]] = {
     
     # Date and time tracking
     "px_create_datetime": {"en": "Creation Date", "ar": "تاريخ الإنشاء", "type": "date_time", "mandatory": True},
-    "py_resolved_timestamp": {"en": "Resolution Date", "ar": "تاريخ الحل", "type": "date_time", "mandatory": False},
-    "ext_entity_essigned_date": {"en": "Assignment Date", "ar": "تاريخ التعيين", "type": "date_time", "mandatory": False},
+    "py_resolved_timestamp": {"en": "Resolution Date", "ar": "تاريخ الحل", "type": "string", "mandatory": False},
+    "ext_entity_essigned_date": {"en": "Assignment Date", "ar": "تاريخ التعيين", "type": "string", "mandatory": False},
     "ext_entity_resolved_date": {"en": "External Resolution Date", "ar": "تاريخ الحل الخارجي", "type": "string", "mandatory": False},
     "inc_date": {"en": "Incident Date", "ar": "تاريخ البلاغ", "type": "string", "mandatory": False},
     "inc_date_month": {"en": "Incident Month", "ar": "شهر البلاغ", "type": "string", "mandatory": False},
