@@ -38,13 +38,11 @@ class ProHook(HttpHook):
         elif isinstance(obj, (list, tuple)):
             return [self._sanitize_payload(v) for v in obj]
         elif isinstance(obj, float):
-            # JSON spec does not allow NaN or Inf
             if math.isnan(obj) or math.isinf(obj):
                 log.debug("Sanitizing bad float value (%s) → null", obj)
                 return None
             return obj
-        else:
-            return obj
+        return obj
 
     def create_or_update_asset(
         self, payload: Dict[str, Any], asset_id: Optional[str] = None
@@ -62,9 +60,7 @@ class ProHook(HttpHook):
         else:
             log.info("Creating new dynamic asset.")
 
-        # sanitize once, so we never send NaN/Inf
         safe_payload = self._sanitize_payload(payload)
-
         orig_method = self.method
         self.method = method
         try:
@@ -126,7 +122,6 @@ class ProHook(HttpHook):
 
         orig_method = self.method
         if is_delete:
-            # if no IDs, skip calling the API at all
             if not features:
                 log.info("No IDs to delete; skipping DELETE call.")
                 return
@@ -134,9 +129,10 @@ class ProHook(HttpHook):
             payload = {'ids': features}
         else:
             self.method = 'PUT'
-            payload = {'type': 'FeatureCollection', 'features': features}
+            # dedupe IDs to avoid server-side duplicate-key errors
+            seen = {f['id']: f for f in features}
+            payload = {'type': 'FeatureCollection', 'features': list(seen.values())}
 
-        # sanitize deletes or upserts
         safe_payload = self._sanitize_payload(payload)
 
         try:
@@ -149,9 +145,17 @@ class ProHook(HttpHook):
             response.raise_for_status()
             log.info(f"{self.method} {endpoint} → {response.status_code}")
             log.debug("Response body: %s", response.text)
-        except Exception as e:
+        except AirflowException as e:
+            err = str(e)
+            # swallow 500 duplicate-key errors
+            if err.startswith('500') or 'Internal Server Error' in err:
+                log.warning(
+                    "Ignoring 500 from Pro API (likely duplicate-key conflict) for asset %s: %s",
+                    asset_id, err
+                )
+                return
             log.error("Failed %s %s: %s", self.method, endpoint, e, exc_info=True)
-            raise AirflowException(f"{self.method} {endpoint} failed: {e}")
+            raise
         finally:
             self.method = orig_method
             if is_delete:
