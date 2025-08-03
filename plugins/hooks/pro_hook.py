@@ -53,7 +53,7 @@ class ProHook(HttpHook):
                 endpoint=endpoint,
                 json=payload,
                 headers=headers,
-                extra_options={'timeout': (3.05, 30)}  # connect, read timeouts
+                extra_options={'timeout': (3.05, 30)}
             )
             response.raise_for_status()
             log.info(f"{method} {endpoint} → {response.status_code}")
@@ -92,7 +92,7 @@ class ProHook(HttpHook):
         self,
         asset_id: str,
         access_token: str,
-        features: List[Dict],
+        features: List[Any],
         is_delete: bool = False
     ) -> None:
         """
@@ -106,7 +106,10 @@ class ProHook(HttpHook):
         orig_method = self.method
         if is_delete:
             self.method = 'DELETE'
-            payload = None
+            if not features:
+                log.info("No IDs to delete; skipping DELETE call.")
+                return
+            payload = {'ids': features}
         else:
             self.method = 'PUT'
             payload = {'type': 'FeatureCollection', 'features': features}
