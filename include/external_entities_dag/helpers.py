@@ -1,4 +1,4 @@
-# include/digging_license_info_dag/helpers.py
+# include/external_entities_dag/helpers.py
 
 import os
 import json
@@ -13,11 +13,11 @@ from airflow.models import Variable
 from airflow.providers.oracle.hooks.oracle import OracleHook
 from dateutil.parser import parse as date_parse
 
-from include.digging_license_info_dag.constants import (
+from include.external_entities_dag.constants import (
     VIEW_VAR, CONFIG_VAR, KNOWN_IDS_VAR,
     DB_CONN_ID
 )
-from include.digging_license_info_dag.attribute_mapper import ATTRIBUTE_MAPPER
+from include.external_entities_dag.attribute_mapper import ATTRIBUTE_MAPPER
 
 log = logging.getLogger(__name__)
 
