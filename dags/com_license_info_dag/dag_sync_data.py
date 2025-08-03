@@ -37,7 +37,7 @@ default_args = {
     'depends_on_past': False,
     'retries': 2,
     'retry_delay': timedelta(minutes=5),
-    'execution_timeout': timedelta(hours=3),
+    'execution_timeout': timedelta(hours=12),
 }
 
 @dag(
