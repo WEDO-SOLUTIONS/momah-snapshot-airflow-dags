@@ -1,44 +1,45 @@
+import json
+from collections import defaultdict
+
 from airflow import DAG
 from airflow.decorators import task
 from airflow.hooks.postgres_hook import PostgresHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.utils.dates import days_ago
 
-import json
-from collections import defaultdict
-
 
 # ======================================================
 #  CONNECTION VARIABLES (EDIT THESE ONLY)
 # ======================================================
 
-DB_CONN_ID = "stg_postgres_conn_catalog"     # Your actual Postgres connection
+DB_CONN_ID = "stg_postgres_conn_catalog"   # Postgres catalog connection
+AWS_CONN_ID = "oci_s3_conn"               # OCI S3-compatible conn (Amazon type)
 
-AWS_CONN_ID = "oci_s3_conn"                  # OCI S3-compatible connection
-
-# One bucket per region in OCI:
-S3_BUCKET_PREFIX = "balady_business_"        # Creates: balady_business_{region_id}
-
-# Path inside each bucket:
+# Single OCI bucket, one file per region under a prefix
+S3_BUCKET_NAME = "balady_business"
 S3_KEY_TEMPLATE = "regions/{region_id}/data.json"
 
 TABLE_NAME = "branches"
 JSON_COLUMN = "json_data"
+
 # ======================================================
 
 
 # ===================== HELPERS ========================
 
 def safe_json_load(v):
-    if isinstance(v, str):
+    if isinstance(v, str) and v:
         try:
             return json.loads(v)
-        except:
+        except Exception:
             return None
     return None
 
 
 def get_latest_schema():
+    """
+    Returns the latest numeric schema name, e.g. '20251207'
+    """
     hook = PostgresHook(postgres_conn_id=DB_CONN_ID)
     sql = """
         SELECT nspname AS schema_name
@@ -47,11 +48,16 @@ def get_latest_schema():
         ORDER BY nspname::bigint DESC
         LIMIT 1;
     """
-    res = hook.get_first(sql)
-    return res[0]
+    row = hook.get_first(sql)
+    if not row or not row[0]:
+        raise ValueError("No numeric schema found in pg_namespace")
+    return row[0]
 
 
 def get_region_ids(schema_name):
+    """
+    Returns list of distinct region_id values from {schema}.branches
+    """
     hook = PostgresHook(postgres_conn_id=DB_CONN_ID)
     sql = f"""
         SELECT DISTINCT region_id
@@ -63,14 +69,15 @@ def get_region_ids(schema_name):
 
 
 def get_rows_for_region(schema_name, region_id):
+    """
+    Returns list[dict] of all rows for the given region, with parsed JSON.
+    """
     hook = PostgresHook(postgres_conn_id=DB_CONN_ID)
-
     sql = f"""
         SELECT *
         FROM {schema_name}.{TABLE_NAME}
         WHERE region_id = {region_id};
     """
-
     df = hook.get_pandas_df(sql)
     records = df.to_dict(orient="records")
 
@@ -82,15 +89,21 @@ def get_rows_for_region(schema_name, region_id):
 
 def group_ar_en(rows):
     """
-    Groups rows by ID → { "ar": row, "en": row }
+    Group rows by 'id', splitting into Arabic/English.
+
+    Returns:
+      {
+        "<id>": {"ar": row_or_None, "en": row_or_None}
+      }
     """
     grouped = defaultdict(lambda: {"ar": None, "en": None})
 
     for r in rows:
-        lang_val = str(r.get("lang") or "").lower()
-        lang = "en"
+        lang_val = (r.get("lang") or r.get("language") or r.get("locale") or "").lower()
         if lang_val.startswith("ar"):
             lang = "ar"
+        else:
+            lang = "en"
 
         rec_id = str(r.get("id"))
         grouped[rec_id][lang] = r
@@ -108,23 +121,31 @@ def get_region_name_from_json(json_obj):
 
 
 def collect_contacts(json_obj, contact_type):
-    result = []
+    """
+    Extract contact_groups[].contacts[].text for given type.
+    """
+    out = []
     if not json_obj:
-        return result
-    for grp in json_obj.get("contact_groups", []):
-        for c in grp.get("contacts", []):
+        return out
+
+    for grp in json_obj.get("contact_groups", []) or []:
+        for c in grp.get("contacts", []) or []:
             if c.get("type") == contact_type:
-                txt = c.get("text") or c.get("value")
-                if txt:
-                    result.append(txt)
-    return result
+                val = c.get("text") or c.get("value")
+                if val:
+                    out.append(val)
+    return out
 
 
 def build_shifts(json_obj):
+    """
+    Build `shifts` array based on schedule, with hardcoded day/status/period structure.
+    """
     if not json_obj:
         return []
 
-    schedule = json_obj.get("schedule", {})
+    schedule = json_obj.get("schedule", {}) or {}
+
     day_map = {
         "Sun": ("sunday", "الأحد"),
         "Mon": ("monday", "الاثنين"),
@@ -141,17 +162,23 @@ def build_shifts(json_obj):
         if not entry:
             continue
 
-        wh = entry.get("working_hours", [])
-        if not wh:
+        wh_list = entry.get("working_hours", []) or []
+        if not wh_list:
             continue
 
-        wh0 = wh[0]
+        wh = wh_list[0]
+        from_time = wh.get("from")
+        to_time = wh.get("to")
+
+        if not (from_time and to_time):
+            continue
+
         shifts.append({
             "day": {"id": day_id, "name": day_name},
             "status": {"id": "opened", "name": "مفتوح"},
             "period": {"id": "first", "name": "الاولى"},
-            "from": wh0.get("from"),
-            "to": wh0.get("to"),
+            "from": from_time,
+            "to": to_time,
         })
 
     return shifts
@@ -159,73 +186,73 @@ def build_shifts(json_obj):
 
 def classify_object(json_obj, rubric_ids_col):
     """
-    Very simple stub mapping — expand later if needed.
-
-    If rubric contains "207" => pharmacy
-    If rubric contains "162" => restaurants & cafes
+    Basic rubric → classification mapping.
+    If we can't determine, we return None.
     """
-    rubrics = (json_obj or {}).get("rubrics", [])
+    rubrics = (json_obj or {}).get("rubrics", []) or []
+    ids = {str(r.get("id")) for r in rubrics if r.get("id") is not None}
 
-    ids = {str(r.get("id")) for r in rubrics}
-
+    # Example rules, extend later if needed:
     if "207" in ids:
         return "pharmacy"
-
     if "162" in ids:
         return "restaurantAndCafe"
 
-    return None
+    return None  # leave classification null otherwise
 
 
 def build_dest_record(rec_id, lang_group):
-    ar = lang_group["ar"]
-    en = lang_group["en"]
+    """
+    Build one destination JSON object for a single business id.
+    """
+    row_ar = lang_group.get("ar")
+    row_en = lang_group.get("en")
+    any_row = row_ar or row_en or {}
 
-    any_row = ar or en or {}
-    json_ar = ar["_json"] if ar else {}
-    json_en = en["_json"] if en else {}
-
+    json_ar = (row_ar or {}).get("_json") or {}
+    json_en = (row_en or {}).get("_json") or {}
     base_json = json_ar or json_en
 
-    # -------------------------------------------
-    # Basic fields
-    # -------------------------------------------
+    # synCode
     syn_code = any_row.get("id")
 
-    # License
-    trade_license = (base_json or {}).get("trade_license", {})
+    # commercialLicenseNumber from trade_license.license
+    trade_license = (base_json or {}).get("trade_license") or {}
     commercial_license_number = trade_license.get("license")
 
-    # Classification
+    # classification
     classification_id = classify_object(base_json, any_row.get("rubric_ids"))
     classification = {
         "id": classification_id,
         "name": ""
     } if classification_id else None
 
-    # Names
-    name_ar = json_ar.get("name") if json_ar else None
-    name_en = json_en.get("name") if json_en else None
+    # names from JSON by lang
+    name_ar = json_ar.get("name")
+    name_en = json_en.get("name")
 
-    # Rubrics
-    rubrics = base_json.get("rubrics", [])
+    # rubrics - full array
+    rubrics = base_json.get("rubrics", []) or []
 
+    # showedName mapping (note the cross-language mapping per your spec)
     showed_name = [
         {"id": "nameInArabic", "name": name_en},
         {"id": "nameInEnglish", "name": name_ar},
     ]
 
+    # region info
     region_id = any_row.get("region_id")
     region_name = get_region_name_from_json(base_json)
 
-    city_name = (ar or en or {}).get("city_name")
-    district_name = (ar or en or {}).get("district_name")
+    # city/district from AR row with fallback to EN
+    city_name = (row_ar or row_en or {}).get("city_name")
+    district_name = (row_ar or row_en or {}).get("district_name")
 
-    # Location
+    # location from columns
     lat = any_row.get("lat")
     lon = any_row.get("lon")
 
-    # Contacts
+    # contacts
     phone = collect_contacts(base_json, "phone")
     whatsapp = collect_contacts(base_json, "whatsapp")
     email = collect_contacts(base_json, "email")
@@ -233,85 +260,92 @@ def build_dest_record(rec_id, lang_group):
     facebook = collect_contacts(base_json, "facebook")
     twitter = collect_contacts(base_json, "twitter")
     instagram = collect_contacts(base_json, "instagram")
-    other = collect_contacts(base_json, "youtube")
+    other_account = collect_contacts(base_json, "youtube")
 
-    # Shifts
+    # shifts
     shifts = build_shifts(base_json)
 
-    # Building ID
+    # building id from JSON
     building_id = (base_json or {}).get("building_id")
 
-    record = {
+    general_template_data = {
+        "nameAr": name_ar,
+        "nameEn": name_en,
+        "rubrics": rubrics,
+        "showedName": showed_name,
+        # buildingId placed BEFORE regionId as requested
+        "buildingId": building_id,
+        "regionId": str(region_id) if region_id is not None else None,
+        "regionName": region_name,
+        "cityId": None,
+        "cityName": city_name,
+        "district": {
+            "id": None,
+            "name": district_name,
+        },
+        "street": None,
+        "address": None,
+        "location": {
+            "latitude": str(lat) if lat is not None else None,
+            "longitude": str(lon) if lon is not None else None,
+        },
+        "phoneNo": phone,
+        "mobileNo": None,
+        "unifiedPhoneNo": None,
+        "whatsappNo": whatsapp,
+        "email": email,
+        "otherNumber": None,
+        "website": website,
+        "facebook": facebook,
+        "twitter": twitter,
+        "snapchat": None,
+        "instagram": instagram,
+        "otherAccount": other_account,
+        "shifts": shifts,
+    }
+
+    additional_attributes = {
+        "buildingId": building_id,
+    }
+
+    return {
         "synCode": syn_code,
         "commercialLicenseNumber": commercial_license_number,
         "classification": classification,
-        "generalTemplateData": {
-            "nameAr": name_ar,
-            "nameEn": name_en,
-            "rubrics": rubrics,
-            "showedName": showed_name,
-            "regionId": str(region_id) if region_id is not None else None,
-            "regionName": region_name,
-            "cityId": None,
-            "cityName": city_name,
-            "district": {"id": None, "name": district_name},
-            "street": None,
-            "address": None,
-            "location": {
-                "latitude": str(lat) if lat else None,
-                "longitude": str(lon) if lon else None,
-            },
-            "phoneNo": phone,
-            "mobileNo": None,
-            "unifiedPhoneNo": None,
-            "whatsappNo": whatsapp,
-            "email": email,
-            "otherNumber": None,
-            "website": website,
-            "facebook": facebook,
-            "twitter": twitter,
-            "snapchat": None,
-            "instagram": instagram,
-            "otherAccount": other,
-            "shifts": shifts,
-        },
-        "additionalAttributes": {
-            "buildingId": building_id
-        },
+        "generalTemplateData": general_template_data,
+        "additionalAttributes": additional_attributes,
         "siteNotes": [],
     }
 
-    return record
 
-
-# ================= S3 WRITE =====================
-
-def write_to_bucket(region_id, json_list):
-    bucket_name = f"{S3_BUCKET_PREFIX}{region_id}"
-    key = S3_KEY_TEMPLATE.format(region_id=region_id)
-
+def upload_region_json(region_id, json_array):
+    """
+    Upload the array of JSONs for a region to the single OCI bucket.
+    """
     hook = S3Hook(aws_conn_id=AWS_CONN_ID)
 
-    # ensure bucket exists
-    if not hook.check_for_bucket(bucket_name):
-        hook.create_bucket(bucket_name=bucket_name)
+    # ensure main bucket exists
+    if not hook.check_for_bucket(S3_BUCKET_NAME):
+        hook.create_bucket(bucket_name=S3_BUCKET_NAME)
+
+    key = S3_KEY_TEMPLATE.format(region_id=region_id)
 
     hook.load_string(
-        string_data=json.dumps(json_list, ensure_ascii=False),
-        bucket_name=bucket_name,
+        string_data=json.dumps(json_array, ensure_ascii=False),
+        bucket_name=S3_BUCKET_NAME,
         key=key,
         replace=True,
     )
 
-    return bucket_name
+    return {"bucket": S3_BUCKET_NAME, "key": key, "region_id": region_id}
 
 
 # ===================== DAG ========================
 
 with DAG(
-    dag_id="balady_business_dag",
+    dag_id="catalog_numeric_schema_to_oci_per_region",
     start_date=days_ago(1),
-    schedule_interval=None,      # manual trigger
+    schedule_interval=None,   # run manually
     catchup=False,
 ):
 
@@ -320,35 +354,30 @@ with DAG(
         return get_latest_schema()
 
     @task
-    def list_regions(schema):
-        return get_region_ids(schema)
+    def list_regions(schema_name: str):
+        return get_region_ids(schema_name)
 
     @task
-    def pull_region(schema, region_id):
-        return get_rows_for_region(schema, region_id)
+    def fetch_region_data(schema_name: str, region_id: int):
+        return get_rows_for_region(schema_name, region_id)
 
     @task
-    def merge_rows(rows):
+    def merge_region_rows(rows: list):
         if not rows:
             return []
-
         grouped = group_ar_en(rows)
         out = []
-
         for rec_id, lang_group in grouped.items():
             out.append(build_dest_record(rec_id, lang_group))
-
         return out
 
     @task
-    def upload(region_id, json_array):
-        bucket = write_to_bucket(region_id, json_array)
-        return {"region_id": region_id, "bucket": bucket}
+    def write_region(region_id: int, json_array: list):
+        return upload_region_json(region_id, json_array)
 
     schema = latest_schema()
     region_ids = list_regions(schema)
 
-    raw = pull_region.expand(schema=schema, region_id=region_ids)
-    merged = merge_rows.expand(rows=raw)
-
-    upload.expand(region_id=region_ids, json_array=merged)
+    raw_rows = fetch_region_data.expand(schema_name=schema, region_id=region_ids)
+    merged = merge_region_rows.expand(rows=raw_rows)
+    write_region.expand(region_id=region_ids, json_array=merged)
