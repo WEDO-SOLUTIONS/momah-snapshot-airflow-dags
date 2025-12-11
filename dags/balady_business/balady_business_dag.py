@@ -309,7 +309,7 @@ def write_to_bucket(region_id, json_list):
 # ===================== DAG ========================
 
 with DAG(
-    dag_id="catalog_numeric_schema_to_oci_per_region",
+    dag_id="balady_business_dag",
     start_date=days_ago(1),
     schedule_interval=None,      # manual trigger
     catchup=False,
